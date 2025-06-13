@@ -560,15 +560,109 @@ export default function ChatInterface() {
             disabled={isLoading}
           >
             <div className="flex items-center justify-between">
-              <div className="font-semibold text-blue-900 mb-1 text-sm">
-                {value}
-              </div>
+              <div className="font-semibold text-blue-900 mb-1 text-sm">{value}</div>
               <div className="w-5 h-5 border-2 border-blue-300 rounded-full group-hover:border-blue-500 group-hover:bg-blue-500 transition-all duration-200 flex items-center justify-center">
                 <CheckCircle className="w-3 h-3 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
             </div>
           </button>
         ))}
+      </div>
+    );
+  };
+
+  const renderProgressBar = () => {
+    const steps = [
+      "planning",
+      "information_gathering",
+      "analysis",
+      "response_formatting",
+      "completed",
+    ];
+
+    // Map backend step names to frontend step names
+    const mapBackendStep = (backendStep: string): string => {
+      const stepMapping: { [key: string]: string } = {
+        planning: "planning",
+        information_gathering: "information_gathering",
+        research_direction_check: "information_gathering", // Still in gathering phase
+        analysis: "analysis",
+        format_selection: "analysis", // Still in analysis phase
+        response_formatting: "response_formatting",
+        completed: "completed",
+      };
+      return stepMapping[backendStep] || "planning"; // Default to planning if unknown
+    };
+
+    const mappedStep = mapBackendStep(currentStep);
+    const currentIndex = steps.indexOf(mappedStep);
+
+    return (
+      <div className="bg-white/80 backdrop-blur-sm rounded-lg shadow-soft border border-white/30 p-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center space-x-2">
+            <h3 className="text-xs font-semibold text-gray-800">Research Progress</h3>
+            <div className="w-1 h-1 bg-green-400 rounded-full animate-pulse"></div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="text-xs text-gray-600">
+              {STEP_DESCRIPTIONS[
+                currentStep as keyof typeof STEP_DESCRIPTIONS
+              ] || currentStep}
+            </span>
+            <span className="text-xs font-medium text-gray-500">
+              {Math.round(((currentIndex + 1) / steps.length) * 100)}%
+            </span>
+          </div>
+        </div>
+
+        {/* Compact horizontal progress with small icons */}
+        <div className="flex items-center space-x-1.5 mb-2">
+          {steps.map((step, index) => {
+            const isActive = index <= currentIndex;
+            const isCurrent = index === currentIndex;
+            const IconComponent = STEP_ICONS[step as keyof typeof STEP_ICONS];
+
+            return (
+              <div key={step} className="flex items-center">
+                <div
+                  className={`
+                  progress-step flex items-center justify-center w-6 h-6 rounded-lg border relative
+                  ${
+                    isActive
+                      ? isCurrent
+                        ? "bg-gradient-to-br from-primary-500 to-primary-600 border-primary-500 text-white shadow-soft active"
+                        : "bg-gradient-to-br from-green-500 to-green-600 border-green-500 text-white"
+                      : "bg-gray-100 border-gray-300 text-gray-400"
+                  }
+                `}
+                >
+                  <IconComponent className="w-3 h-3" />
+                  {isCurrent && (
+                    <div className="absolute -inset-0.5 bg-gradient-to-br from-primary-400 to-primary-600 rounded-lg opacity-30 animate-pulse"></div>
+                  )}
+                </div>
+                {index < steps.length - 1 && (
+                  <div
+                    className={`w-6 h-0.5 mx-0.5 rounded-full transition-all duration-500 ${
+                      isActive
+                        ? "bg-gradient-to-r from-green-400 to-green-600"
+                        : "bg-gray-300"
+                    }`}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Thin progress bar */}
+        <div className="w-full bg-gray-200 rounded-full h-1">
+          <div
+            className="bg-gradient-to-r from-primary-500 to-secondary-500 h-1 rounded-full transition-all duration-500"
+            style={{ width: `${((currentIndex + 1) / steps.length) * 100}%` }}
+          ></div>
+        </div>
       </div>
     );
   };
@@ -655,205 +749,201 @@ export default function ChatInterface() {
           </div>
         )}
 
-        {/* Message Rendering with Choice Message Support */}
         {messages.map((message, index) => (
-          <div key={index} className="animate-fade-in">
+          <div
+            key={index}
+            className={`flex ${
+              message.role === "user" ? "justify-end" : 
+              message.role === "choice" ? "justify-center" : "justify-start"
+            } chat-message`}
+          >
             {message.role === "choice" ? (
-              // Compact choice indicator positioned above assistant message
-              <div className="flex justify-start mb-1">
-                <div className="choice-compact">
-                  <div className="w-3 h-3 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-full flex items-center justify-center">
-                    <CheckCircle className="w-2 h-2 text-white" />
+              // Special design for choice messages
+              <div className="choice-message animate-slide-up">
+                <div className="flex items-center justify-center space-x-2">
+                  <div className="w-4 h-4 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-2.5 h-2.5 text-white" />
                   </div>
                   <span className="choice-badge">
-                    {message.choiceType === "research_plan"
-                      ? "Plan"
-                      : message.choiceType === "research_direction"
-                      ? "Direction"
-                      : message.choiceType === "response_format"
-                      ? "Format"
-                      : "Choice"}
+                    {message.choiceType === "research_plan" ? "Research Plan" :
+                     message.choiceType === "research_direction" ? "Research Direction" :
+                     message.choiceType === "response_format" ? "Response Format" :
+                     "Selection"}
                   </span>
-                  <span className="text-purple-800 font-medium text-xs">
+                  <span className="text-purple-800 font-medium">
                     {message.content}
                   </span>
                 </div>
-              </div>
-            ) : (
-              // Regular message rendering
-              <div
-                className={`flex ${
-                  message.role === "user" ? "justify-end" : "justify-start"
-                } mb-4`}
-              >
-                <div
-                  className={`flex items-start space-x-3 max-w-4xl ${
-                    message.role === "user"
-                      ? "flex-row-reverse space-x-reverse"
-                      : ""
-                  }`}
-                >
-                  <div
-                    className={`
-                      avatar-sm
-                      ${
-                        message.role === "user"
-                          ? "bg-gradient-to-br from-primary-500 to-primary-600"
-                          : message.role === "system"
-                          ? "bg-gradient-to-br from-orange-400 to-yellow-500"
-                          : "bg-gradient-to-br from-gray-700 to-gray-800"
-                      }
-                    `}
-                  >
-                    {message.role === "user" ? (
-                      <User className="w-4 h-4 text-white" />
-                    ) : message.role === "system" ? (
-                      <AlertCircle className="w-4 h-4 text-white" />
-                    ) : (
-                      <Bot className="w-4 h-4 text-white" />
-                    )}
-                  </div>
-
-                  <div
-                    className={`
-                      message-bubble
-                      ${
-                        message.role === "user"
-                          ? "user-message"
-                          : message.role === "system"
-                          ? "system-message"
-                          : "assistant-message"
-                      }
-                    `}
-                  >
-                    {message.role === "assistant" ? (
-                      <div className="prose prose-gray prose-sm max-w-none leading-relaxed">
-                        <ReactMarkdown
-                          components={{
-                            p: ({ children }) => (
-                              <p className="mb-3 last:mb-0 leading-relaxed text-sm">
-                                {children}
-                              </p>
-                            ),
-                            strong: ({ children }) => (
-                              <strong className="font-semibold text-gray-900">
-                                {children}
-                              </strong>
-                            ),
-                            em: ({ children }) => (
-                              <em className="italic text-gray-700">
-                                {children}
-                              </em>
-                            ),
-                            code: ({ children }) => (
-                              <code className="bg-gray-100 text-gray-900 px-1.5 py-0.5 rounded text-xs font-mono">
-                                {children}
-                              </code>
-                            ),
-                            pre: ({ children }) => (
-                              <pre className="bg-gray-100 p-3 rounded-lg overflow-x-auto mb-3 text-xs">
-                                {children}
-                              </pre>
-                            ),
-                            h1: ({ children }) => (
-                              <h1 className="text-lg font-bold text-gray-900 mb-3 mt-4 first:mt-0">
-                                {children}
-                              </h1>
-                            ),
-                            h2: ({ children }) => (
-                              <h2 className="text-base font-bold text-gray-900 mb-2 mt-4 first:mt-0">
-                                {children}
-                              </h2>
-                            ),
-                            h3: ({ children }) => (
-                              <h3 className="text-sm font-bold text-gray-900 mb-2 mt-3 first:mt-0">
-                                {children}
-                              </h3>
-                            ),
-                            h4: ({ children }) => (
-                              <h4 className="text-sm font-semibold text-gray-900 mb-1 mt-3 first:mt-0">
-                                {children}
-                              </h4>
-                            ),
-                            ul: ({ children }) => (
-                              <ul className="list-disc list-inside mb-3 space-y-1 pl-3 text-sm">
-                                {children}
-                              </ul>
-                            ),
-                            ol: ({ children }) => (
-                              <ol className="list-decimal list-inside mb-3 space-y-1 pl-3 text-sm">
-                                {children}
-                              </ol>
-                            ),
-                            li: ({ children }) => (
-                              <li className="text-gray-800 leading-relaxed text-sm">
-                                {children}
-                              </li>
-                            ),
-                            blockquote: ({ children }) => (
-                              <blockquote className="border-l-3 border-gray-300 pl-3 italic text-gray-700 mb-3 text-sm">
-                                {children}
-                              </blockquote>
-                            ),
-                            a: ({ children, href }) => (
-                              <a
-                                href={href}
-                                className="text-blue-600 hover:text-blue-800 underline text-sm"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                {children}
-                              </a>
-                            ),
-                            table: ({ children }) => (
-                              <div className="overflow-x-auto mb-3">
-                                <table className="min-w-full border border-gray-300 rounded-lg text-xs">
-                                  {children}
-                                </table>
-                              </div>
-                            ),
-                            thead: ({ children }) => (
-                              <thead className="bg-gray-50">{children}</thead>
-                            ),
-                            th: ({ children }) => (
-                              <th className="border border-gray-300 px-3 py-2 text-left font-semibold text-xs">
-                                {children}
-                              </th>
-                            ),
-                            td: ({ children }) => (
-                              <td className="border border-gray-300 px-3 py-2 text-xs">
-                                {children}
-                              </td>
-                            ),
-                          }}
-                        >
-                          {message.content}
-                        </ReactMarkdown>
-                      </div>
-                    ) : (
-                      <div className="whitespace-pre-wrap leading-relaxed text-sm">
-                        {message.content}
-                      </div>
-                    )}
-                    <div
-                      className={`text-xs mt-2 flex items-center space-x-2 ${
-                        message.role === "user"
-                          ? "text-primary-100"
-                          : "text-gray-500"
-                      }`}
-                    >
-                      <span>{message.timestamp.toLocaleTimeString()}</span>
-                      {message.role === "assistant" && (
-                        <span className="flex items-center space-x-1">
-                          <CheckCircle className="w-3 h-3" />
-                          <span>Verified</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                <div className="text-xs mt-1 text-center text-purple-600">
+                  {message.timestamp.toLocaleTimeString()}
                 </div>
               </div>
-            )}
+            ) : (
+              // Regular message design
+              <div
+                className={`flex items-start space-x-3 max-w-5xl ${
+                  message.role === "user"
+                    ? "flex-row-reverse space-x-reverse"
+                    : ""
+                }`}
+              >
+                <div
+                  className={`
+                  avatar-sm
+                  ${
+                    message.role === "user"
+                      ? "bg-gradient-to-br from-primary-500 to-primary-600"
+                      : message.role === "system"
+                      ? "bg-gradient-to-br from-orange-400 to-yellow-500"
+                      : "bg-gradient-to-br from-gray-700 to-gray-800"
+                  }
+                `}
+                >
+                  {message.role === "user" ? (
+                    <User className="w-4 h-4 text-white" />
+                  ) : message.role === "system" ? (
+                    <AlertCircle className="w-4 h-4 text-white" />
+                  ) : (
+                    <Bot className="w-4 h-4 text-white" />
+                  )}
+                </div>
+
+                <div
+                  className={`
+                  message-bubble
+                  ${
+                    message.role === "user"
+                      ? "user-message"
+                      : message.role === "system"
+                      ? "system-message"
+                      : "assistant-message"
+                  }
+                `}
+                >
+                {message.role === "assistant" ? (
+                  <div className="prose prose-gray prose-sm max-w-none leading-relaxed">
+                    <ReactMarkdown
+                      components={{
+                        p: ({ children }) => (
+                          <p className="mb-3 last:mb-0 leading-relaxed text-sm">
+                            {children}
+                          </p>
+                        ),
+                        strong: ({ children }) => (
+                          <strong className="font-semibold text-gray-900">
+                            {children}
+                          </strong>
+                        ),
+                        em: ({ children }) => (
+                          <em className="italic text-gray-700">{children}</em>
+                        ),
+                        code: ({ children }) => (
+                          <code className="bg-gray-100 text-gray-900 px-1.5 py-0.5 rounded text-xs font-mono">
+                            {children}
+                          </code>
+                        ),
+                        pre: ({ children }) => (
+                          <pre className="bg-gray-100 p-3 rounded-lg overflow-x-auto mb-3 text-xs">
+                            {children}
+                          </pre>
+                        ),
+                        h1: ({ children }) => (
+                          <h1 className="text-lg font-bold text-gray-900 mb-3 mt-4 first:mt-0">
+                            {children}
+                          </h1>
+                        ),
+                        h2: ({ children }) => (
+                          <h2 className="text-base font-bold text-gray-900 mb-2 mt-4 first:mt-0">
+                            {children}
+                          </h2>
+                        ),
+                        h3: ({ children }) => (
+                          <h3 className="text-sm font-bold text-gray-900 mb-2 mt-3 first:mt-0">
+                            {children}
+                          </h3>
+                        ),
+                        h4: ({ children }) => (
+                          <h4 className="text-sm font-semibold text-gray-900 mb-1 mt-3 first:mt-0">
+                            {children}
+                          </h4>
+                        ),
+                        ul: ({ children }) => (
+                          <ul className="list-disc list-inside mb-3 space-y-1 pl-3 text-sm">
+                            {children}
+                          </ul>
+                        ),
+                        ol: ({ children }) => (
+                          <ol className="list-decimal list-inside mb-3 space-y-1 pl-3 text-sm">
+                            {children}
+                          </ol>
+                        ),
+                        li: ({ children }) => (
+                          <li className="text-gray-800 leading-relaxed text-sm">
+                            {children}
+                          </li>
+                        ),
+                        blockquote: ({ children }) => (
+                          <blockquote className="border-l-3 border-gray-300 pl-3 italic text-gray-700 mb-3 text-sm">
+                            {children}
+                          </blockquote>
+                        ),
+                        a: ({ children, href }) => (
+                          <a
+                            href={href}
+                            className="text-blue-600 hover:text-blue-800 underline text-sm"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {children}
+                          </a>
+                        ),
+                        table: ({ children }) => (
+                          <div className="overflow-x-auto mb-3">
+                            <table className="min-w-full border border-gray-300 rounded-lg text-xs">
+                              {children}
+                            </table>
+                          </div>
+                        ),
+                        thead: ({ children }) => (
+                          <thead className="bg-gray-50">{children}</thead>
+                        ),
+                        th: ({ children }) => (
+                          <th className="border border-gray-300 px-3 py-2 text-left font-semibold text-xs">
+                            {children}
+                          </th>
+                        ),
+                        td: ({ children }) => (
+                          <td className="border border-gray-300 px-3 py-2 text-xs">
+                            {children}
+                          </td>
+                        ),
+                      }}
+                    >
+                      {message.content}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  <div className="whitespace-pre-wrap leading-relaxed text-sm">
+                    {message.content}
+                  </div>
+                )}
+                <div
+                  className={`text-xs mt-2 flex items-center space-x-2 ${
+                    message.role === "user"
+                      ? "text-primary-100"
+                      : "text-gray-500"
+                  }`}
+                >
+                  <span>{message.timestamp.toLocaleTimeString()}</span>
+                  {message.role === "assistant" && (
+                    <span className="flex items-center space-x-1">
+                      <CheckCircle className="w-3 h-3" />
+                      <span>Verified</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         ))}
 

@@ -15,11 +15,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-os.environ["LANGCHAIN_API_KEY"] = "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"
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
-os.environ["LANGCHAIN_PROJECT"] = "apextestmock"
-
 
 # Initialize IBM Watson LLM
 def get_watson_llm():

@@ -659,24 +659,29 @@ export default function ChatInterface() {
         {messages.map((message, index) => (
           <div key={index} className="animate-fade-in">
             {message.role === "choice" ? (
-              // Compact choice indicator positioned above assistant message
-              <div className="flex justify-start mb-1">
-                <div className="choice-compact">
-                  <div className="w-3 h-3 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-full flex items-center justify-center">
-                    <CheckCircle className="w-2 h-2 text-white" />
+              // Special rendering for choice messages
+              <div className="flex justify-center mb-4">
+                <div className="choice-message max-w-2xl">
+                  <div className="flex items-center justify-center space-x-2 mb-2">
+                    <div className="w-5 h-5 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center">
+                      <CheckCircle className="w-3 h-3 text-white" />
+                    </div>
+                    <span className="choice-badge">
+                      {message.choiceType === "research_plan"
+                        ? "Research Plan"
+                        : message.choiceType === "research_direction"
+                        ? "Research Direction"
+                        : message.choiceType === "response_format"
+                        ? "Response Format"
+                        : "Selection"}
+                    </span>
                   </div>
-                  <span className="choice-badge">
-                    {message.choiceType === "research_plan"
-                      ? "Plan"
-                      : message.choiceType === "research_direction"
-                      ? "Direction"
-                      : message.choiceType === "response_format"
-                      ? "Format"
-                      : "Choice"}
-                  </span>
-                  <span className="text-purple-800 font-medium text-xs">
+                  <div className="text-center text-purple-800 font-medium text-sm">
                     {message.content}
-                  </span>
+                  </div>
+                  <div className="text-xs text-purple-600 text-center mt-1">
+                    {message.timestamp.toLocaleTimeString()}
+                  </div>
                 </div>
               </div>
             ) : (

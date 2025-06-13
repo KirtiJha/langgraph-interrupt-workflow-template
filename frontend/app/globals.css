@@ -18,7 +18,7 @@
   }
 
   .interrupt-card {
-    @apply bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6 shadow-soft;
+    @apply bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 shadow-soft;
   }
 
   .progress-step {
@@ -26,11 +26,11 @@
   }
 
   .progress-step.active {
-    @apply scale-110 shadow-soft;
+    @apply scale-105 shadow-soft;
   }
 
   .message-bubble {
-    @apply rounded-2xl px-6 py-4 max-w-2xl shadow-soft;
+    @apply rounded-xl px-4 py-3 max-w-3xl shadow-soft text-sm leading-relaxed;
   }
 
   .assistant-message {
@@ -46,15 +46,44 @@
   }
 
   .option-button {
-    @apply p-4 text-left rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 transition-all duration-200 hover:shadow-soft hover:scale-105;
+    @apply p-3 text-left rounded-lg bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 transition-all duration-200 hover:shadow-soft hover:scale-[1.02];
   }
 
   .input-field {
-    @apply px-6 py-4 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 shadow-soft;
+    @apply px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 shadow-soft text-sm;
   }
 
   .send-button {
-    @apply px-8 py-4 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-soft hover:shadow-soft-lg hover:scale-105;
+    @apply px-6 py-3 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-soft hover:shadow-soft-lg hover:scale-105 text-sm font-medium;
+  }
+
+  .compact-card {
+    @apply bg-white/70 backdrop-blur-sm rounded-xl shadow-soft border border-white/30 p-4;
+  }
+
+  .avatar-sm {
+    @apply w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 shadow-soft;
+  }
+
+  .avatar-md {
+    @apply w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-soft;
+  }
+
+  .progress-bar-compact {
+    @apply flex items-center justify-between p-4 bg-white/70 backdrop-blur-sm rounded-xl shadow-soft border border-white/30;
+  }
+
+  .choice-message {
+    @apply bg-gradient-to-r from-purple-50/70 to-indigo-50/70 border border-purple-200/60 rounded-full px-3 py-1.5 max-w-fit shadow-sm backdrop-blur-sm text-xs;
+  }
+
+  .choice-badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100/80 text-purple-700 border border-purple-200/60;
+  }
+
+  .choice-compact {
+    @apply flex items-center space-x-2 px-3 py-1.5 bg-purple-50 border border-purple-200 rounded-full max-w-fit;
+    @apply shadow-sm hover:shadow-md transition-all duration-200;
   }
 }
 
@@ -74,5 +103,82 @@
         rgba(217, 70, 239, 0.1) 0%,
         transparent 50%
       );
+  }
+
+  .border-3 {
+    border-width: 3px;
+  }
+
+  .prose-sm {
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  .prose-sm p {
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .prose-sm h1 {
+    font-size: 1.25rem;
+    line-height: 1.4;
+    margin-top: 1rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .prose-sm h2 {
+    font-size: 1.125rem;
+    line-height: 1.4;
+    margin-top: 0.875rem;
+    margin-bottom: 0.625rem;
+  }
+
+  .prose-sm h3 {
+    font-size: 1rem;
+    line-height: 1.4;
+    margin-top: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .prose-sm ul,
+  .prose-sm ol {
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+    padding-left: 1rem;
+  }
+
+  .prose-sm li {
+    margin-top: 0.25rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .prose-sm blockquote {
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+    padding-left: 0.75rem;
+    border-left-width: 3px;
+  }
+
+  .prose-sm pre {
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+    padding: 0.75rem;
+    font-size: 0.8125rem;
+  }
+
+  .prose-sm code {
+    font-size: 0.8125rem;
+    padding: 0.125rem 0.25rem;
+  }
+
+  .prose-sm table {
+    font-size: 0.8125rem;
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .prose-sm th,
+  .prose-sm td {
+    padding: 0.5rem 0.75rem;
   }
 }
