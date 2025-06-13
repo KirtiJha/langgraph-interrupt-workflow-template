@@ -1,14 +1,16 @@
 # main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import TypedDict, Annotated, Union
 import uuid
 import os
+import json
 from datetime import datetime
 
 from langgraph.types import Command
-from graph import research_graph, ResearchState
+from graph import research_graph, ResearchState, stream_research_response
 
 os.environ["LANGCHAIN_API_KEY"] = "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"
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
@@ -69,8 +71,8 @@ async def start_chat(chat_input: ChatInput):
     }
 
     try:
-        # Start the research graph
-        result = research_graph.invoke(initial_state, config)
+        # Start the research graph with async API
+        result = await research_graph.ainvoke(initial_state, config)
 
         # Get the current state
         state = research_graph.get_state(config)
@@ -146,8 +148,8 @@ async def resume_research(data: ResumeInput):
     config = {"configurable": {"thread_id": data.thread_id}}
 
     try:
-        # Resume the graph with the user's choice
-        result = research_graph.invoke(Command(resume=data.choice), config)
+        # Resume the graph with the user's choice using async API
+        result = await research_graph.ainvoke(Command(resume=data.choice), config)
 
         # Get the latest state to return
         state = research_graph.get_state(config)
@@ -191,24 +193,20 @@ async def resume_research(data: ResumeInput):
 async def continue_conversation(data: ContinueInput):
     """Continues an existing conversation with a new follow-up question."""
     config = {"configurable": {"thread_id": data.thread_id}}
-    
+
     try:
         # Get the current state to check if conversation exists
         current_state = research_graph.get_state(config)
-        
+
         if not current_state.values:
             raise HTTPException(status_code=404, detail="Thread not found")
-        
-        # Preserve existing conversation history and add new message
-        existing_history = current_state.values.get("conversation_history", [])
-        existing_history.append({
-            "role": "user", 
-            "content": data.message,
-            "timestamp": str(datetime.now())
-        })
-        
-        # Create new state for follow-up question, preserving context
+
+        # Get existing messages from the current state (using LangGraph's messages pattern)
+        existing_messages = current_state.values.get("messages", [])
+
+        # Create new state for follow-up question, preserving message history
         follow_up_state = {
+            "messages": existing_messages,  # Preserve conversation messages
             "user_query": data.message,  # New question
             "research_plan": "",  # Reset research fields for new query
             "research_results": [],
@@ -217,23 +215,19 @@ async def continue_conversation(data: ContinueInput):
             "current_step": "planning",
             "requires_user_input": False,
             "interrupt_data": None,
-            "conversation_history": existing_history,  # Preserve history
             "user_choice": None,
-            # Keep previous context accessible if needed
-            "previous_query": current_state.values.get("user_query", ""),
-            "previous_response": current_state.values.get("final_response", ""),
         }
-        
-        # Start the research graph with the new question
-        result = research_graph.invoke(follow_up_state, config)
-        
+
+        # Start the research graph with the new question using async API
+        result = await research_graph.ainvoke(follow_up_state, config)
+
         # Get the updated state
         state = research_graph.get_state(config)
-        
+
         # Check for interrupt in the result
         is_interrupted = False
         interrupt_message = None
-        
+
         if (
             isinstance(result, dict)
             and "__interrupt__" in result
@@ -248,7 +242,7 @@ async def continue_conversation(data: ContinueInput):
             if is_interrupted:
                 next_node = state.next[0]
                 interrupt_message = f"Waiting for input for {next_node}..."
-        
+
         return {
             "state": state.values,
             "next": state.next,
@@ -256,7 +250,7 @@ async def continue_conversation(data: ContinueInput):
             "interrupt_message": interrupt_message,
             "current_step": state.values.get("current_step", "planning"),
         }
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Error continuing conversation: {str(e)}"
@@ -276,6 +270,64 @@ async def get_conversation_history(thread_id: str):
     except Exception as e:
         raise HTTPException(
             status_code=404, detail=f"Thread not found or error getting history: {e}"
+        )
+
+
+@app.post("/stream")
+async def stream_research(data: ResumeInput):
+    """Streams the research response from the response_generator node."""
+    config = {"configurable": {"thread_id": data.thread_id}}
+
+    try:
+        # Stream the research response using the graph's streaming capability
+        async def generate_stream():
+            async for chunk in stream_research_response(data.thread_id, data.choice):
+                yield f"data: {json.dumps(chunk)}\n\n"
+            # Send final done message
+            yield f"data: {json.dumps({'type': 'done', 'content': '', 'done': True})}\n\n"
+
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+            },
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error streaming research: {str(e)}"
+        )
+
+
+@app.get("/stream")
+async def stream_research_get(thread_id: str, choice: str):
+    """Streams the research response from the response_generator node via GET for EventSource."""
+    config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        # Stream the research response using the graph's streaming capability
+        async def generate_stream():
+            async for chunk in stream_research_response(thread_id, choice):
+                yield f"data: {json.dumps(chunk)}\n\n"
+            # Send final done message
+            yield f"data: {json.dumps({'type': 'done', 'content': '', 'done': True})}\n\n"
+
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+            },
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error streaming research: {str(e)}"
         )
 
 

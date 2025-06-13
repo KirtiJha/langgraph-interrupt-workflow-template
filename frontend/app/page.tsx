@@ -46,8 +46,10 @@ const STEP_DESCRIPTIONS = {
   planning: "Planning research strategy",
   awaiting_approval: "Waiting for research approval",
   information_gathering: "Gathering information",
+  research_direction_check: "Refining research direction",
   refining_research: "Refining research direction",
   analysis: "Analyzing information",
+  format_selection: "Selecting response format",
   response_formatting: "Formatting response",
   completed: "Research completed",
 };
@@ -119,13 +121,31 @@ export default function ChatInterface() {
       if (data.requires_input && data.interrupt_message) {
         // Detect interrupt type and set appropriate options
         let options = ["proceed", "simplified", "focused", "cancel"]; // default for research planning
-        
-        if (data.interrupt_message.includes("Research Direction") || data.interrupt_message.includes("explore any specific angle")) {
-          options = ["technical", "practical", "recent", "comparative", "continue"];
-        } else if (data.interrupt_message.includes("presentation style") || data.interrupt_message.includes("comprehensive") || data.interrupt_message.includes("executive")) {
-          options = ["comprehensive", "executive", "structured", "conversational", "bullet_points"];
+
+        if (
+          data.interrupt_message.includes("Research Direction") ||
+          data.interrupt_message.includes("explore any specific angle")
+        ) {
+          options = [
+            "technical",
+            "practical",
+            "recent",
+            "comparative",
+            "continue",
+          ];
+        } else if (
+          data.interrupt_message.includes("Choose Response Format") ||
+          data.interrupt_message.includes("presentation style")
+        ) {
+          options = [
+            "comprehensive",
+            "executive",
+            "structured",
+            "conversational",
+            "bullet_points",
+          ];
         }
-        
+
         // Create interrupt data structure
         const interruptData = {
           type: "user_input",
@@ -174,13 +194,31 @@ export default function ChatInterface() {
       if (data.requires_input && data.interrupt_message) {
         // Detect interrupt type and set appropriate options
         let options = ["proceed", "simplified", "focused", "cancel"]; // default for research planning
-        
-        if (data.interrupt_message.includes("Research Direction") || data.interrupt_message.includes("explore any specific angle")) {
-          options = ["technical", "practical", "recent", "comparative", "continue"];
-        } else if (data.interrupt_message.includes("presentation style") || data.interrupt_message.includes("comprehensive") || data.interrupt_message.includes("executive")) {
-          options = ["comprehensive", "executive", "structured", "conversational", "bullet_points"];
+
+        if (
+          data.interrupt_message.includes("Research Direction") ||
+          data.interrupt_message.includes("explore any specific angle")
+        ) {
+          options = [
+            "technical",
+            "practical",
+            "recent",
+            "comparative",
+            "continue",
+          ];
+        } else if (
+          data.interrupt_message.includes("Choose Response Format") ||
+          data.interrupt_message.includes("presentation style")
+        ) {
+          options = [
+            "comprehensive",
+            "executive",
+            "structured",
+            "conversational",
+            "bullet_points",
+          ];
         }
-        
+
         // Create interrupt data structure
         const interruptData = {
           type: "user_input",
@@ -233,13 +271,32 @@ export default function ChatInterface() {
       if (data.requires_input && data.interrupt_message) {
         // Detect interrupt type and set appropriate options
         let options = ["proceed", "simplified", "focused", "cancel"]; // default for research planning
-        
-        if (data.interrupt_message.includes("Research Direction") || data.interrupt_message.includes("explore any specific angle")) {
-          options = ["technical", "practical", "recent", "comparative", "continue", "continue_context"];
-        } else if (data.interrupt_message.includes("presentation style") || data.interrupt_message.includes("comprehensive") || data.interrupt_message.includes("executive")) {
-          options = ["comprehensive", "executive", "structured", "conversational", "bullet_points"];
+
+        if (
+          data.interrupt_message.includes("Research Direction") ||
+          data.interrupt_message.includes("explore any specific angle")
+        ) {
+          options = [
+            "technical",
+            "practical",
+            "recent",
+            "comparative",
+            "continue",
+            "continue_context",
+          ];
+        } else if (
+          data.interrupt_message.includes("Choose Response Format") ||
+          data.interrupt_message.includes("presentation style")
+        ) {
+          options = [
+            "comprehensive",
+            "executive",
+            "structured",
+            "conversational",
+            "bullet_points",
+          ];
         }
-        
+
         // Create interrupt data structure
         const interruptData = {
           type: "user_input",
@@ -263,6 +320,89 @@ export default function ChatInterface() {
     }
   };
 
+  // Streaming function using EventSource for Server-Sent Events
+  const streamResponse = async (choice: string, userInput?: string) => {
+    if (!threadId) return;
+
+    setIsLoading(true);
+    setInterruptData(null);
+
+    // Add user choice as a message
+    addMessage("user", userInput || choice);
+
+    try {
+      // Create EventSource for streaming
+      const eventSource = new EventSource(
+        `http://localhost:8000/stream?thread_id=${threadId}&choice=${encodeURIComponent(
+          choice
+        )}`
+      );
+
+      let assistantMessage = "";
+
+      // Add initial empty assistant message that we'll update
+      addMessage("assistant", "");
+
+      // Clear loading state once streaming starts
+      setIsLoading(false);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          // Clear loading state as soon as we start receiving data
+          if (data.type === "content" && !data.done) {
+            setIsLoading(false);
+
+            // Accumulate streaming content
+            assistantMessage += data.content;
+
+            // Update the last message (which should be the assistant message)
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              const lastIndex = newMessages.length - 1;
+              if (
+                lastIndex >= 0 &&
+                newMessages[lastIndex].role === "assistant"
+              ) {
+                newMessages[lastIndex] = {
+                  ...newMessages[lastIndex],
+                  content: assistantMessage,
+                };
+              }
+              return newMessages;
+            });
+          } else if (data.done) {
+            // Streaming complete
+            eventSource.close();
+            setIsLoading(false);
+          }
+        } catch (error) {
+          console.error("Error parsing stream data:", error);
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error("EventSource error:", error);
+        eventSource.close();
+        setIsLoading(false);
+        addMessage(
+          "system",
+          "Sorry, there was an error with the streaming response."
+        );
+      };
+
+      // Clean up on component unmount or when streaming completes
+      return () => {
+        eventSource.close();
+      };
+    } catch (error) {
+      console.error("Error starting stream:", error);
+      setIsLoading(false);
+      addMessage("system", "Sorry, there was an error starting the stream.");
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
@@ -283,8 +423,24 @@ export default function ChatInterface() {
   };
 
   const handleOptionClick = (option: string) => {
-    addMessage("user", option);
-    resumeChat(option);
+    // Check if this is likely the final response formatting choice
+    const formatChoices = [
+      "comprehensive",
+      "executive",
+      "structured",
+      "conversational",
+      "bullet_points",
+    ];
+
+    if (formatChoices.includes(option)) {
+      // Use streaming for the final response
+      streamResponse(option);
+    } else {
+      // Use regular resume for other interrupt choices
+      addMessage("user", option);
+      resumeChat(option);
+    }
+
     setInterruptData(null);
   };
 
@@ -305,17 +461,24 @@ export default function ChatInterface() {
                 cancel: "❌ Cancel - Stop the research process",
                 // Research direction options
                 technical: "⚙️ Technical - Deep dive into technical details",
-                practical: "🛠️ Practical - Real-world applications and use cases",
+                practical:
+                  "🛠️ Practical - Real-world applications and use cases",
                 recent: "📈 Recent - Latest developments and trends",
                 comparative: "⚖️ Comparative - Compare different approaches",
                 continue: "➡️ Continue - General comprehensive analysis",
-                continue_context: "🔗 Continue with Context - Build on previous conversation",
+                continue_context:
+                  "🔗 Continue with Context - Build on previous conversation",
                 // Response format options
-                comprehensive: "📚 Comprehensive - Detailed analysis with examples and explanations",
-                executive: "👔 Executive - Concise summary with key insights and recommendations",
-                structured: "📊 Structured - Clear headings, sections, and bullet points",
-                conversational: "💬 Conversational - Natural, friendly tone with explanations",
-                bullet_points: "📝 Bullet Points - Quick reference format with organized lists"
+                comprehensive:
+                  "📚 Comprehensive - Detailed analysis with examples and explanations",
+                executive:
+                  "👔 Executive - Concise summary with key insights and recommendations",
+                structured:
+                  "📊 Structured - Clear headings, sections, and bullet points",
+                conversational:
+                  "💬 Conversational - Natural, friendly tone with explanations",
+                bullet_points:
+                  "📝 Bullet Points - Quick reference format with organized lists",
               };
               return labels[opt] || opt;
             };
@@ -369,7 +532,23 @@ export default function ChatInterface() {
       "response_formatting",
       "completed",
     ];
-    const currentIndex = steps.indexOf(currentStep);
+
+    // Map backend step names to frontend step names
+    const mapBackendStep = (backendStep: string): string => {
+      const stepMapping: { [key: string]: string } = {
+        planning: "planning",
+        information_gathering: "information_gathering",
+        research_direction_check: "information_gathering", // Still in gathering phase
+        analysis: "analysis",
+        format_selection: "analysis", // Still in analysis phase
+        response_formatting: "response_formatting",
+        completed: "completed",
+      };
+      return stepMapping[backendStep] || "planning"; // Default to planning if unknown
+    };
+
+    const mappedStep = mapBackendStep(currentStep);
+    const currentIndex = steps.indexOf(mappedStep);
 
     return (
       <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-soft border border-white/40 p-6">
@@ -581,24 +760,99 @@ export default function ChatInterface() {
                   <div className="prose prose-gray prose-lg max-w-none leading-relaxed">
                     <ReactMarkdown
                       components={{
-                        p: ({ children }) => <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>,
-                        strong: ({ children }) => <strong className="font-bold text-gray-900">{children}</strong>,
-                        em: ({ children }) => <em className="italic text-gray-700">{children}</em>,
-                        code: ({ children }) => <code className="bg-gray-100 text-gray-900 px-2 py-1 rounded text-sm font-mono">{children}</code>,
-                        pre: ({ children }) => <pre className="bg-gray-100 p-4 rounded-lg overflow-x-auto mb-4">{children}</pre>,
-                        h1: ({ children }) => <h1 className="text-2xl font-bold text-gray-900 mb-4 mt-6 first:mt-0">{children}</h1>,
-                        h2: ({ children }) => <h2 className="text-xl font-bold text-gray-900 mb-3 mt-5 first:mt-0">{children}</h2>,
-                        h3: ({ children }) => <h3 className="text-lg font-bold text-gray-900 mb-2 mt-4 first:mt-0">{children}</h3>,
-                        h4: ({ children }) => <h4 className="text-base font-bold text-gray-900 mb-2 mt-3 first:mt-0">{children}</h4>,
-                        ul: ({ children }) => <ul className="list-disc list-inside mb-4 space-y-2 pl-4">{children}</ul>,
-                        ol: ({ children }) => <ol className="list-decimal list-inside mb-4 space-y-2 pl-4">{children}</ol>,
-                        li: ({ children }) => <li className="text-gray-800 leading-relaxed">{children}</li>,
-                        blockquote: ({ children }) => <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-700 mb-4">{children}</blockquote>,
-                        a: ({ children, href }) => <a href={href} className="text-blue-600 hover:text-blue-800 underline" target="_blank" rel="noopener noreferrer">{children}</a>,
-                        table: ({ children }) => <div className="overflow-x-auto mb-4"><table className="min-w-full border border-gray-300 rounded-lg">{children}</table></div>,
-                        thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
-                        th: ({ children }) => <th className="border border-gray-300 px-4 py-2 text-left font-semibold">{children}</th>,
-                        td: ({ children }) => <td className="border border-gray-300 px-4 py-2">{children}</td>,
+                        p: ({ children }) => (
+                          <p className="mb-4 last:mb-0 leading-relaxed">
+                            {children}
+                          </p>
+                        ),
+                        strong: ({ children }) => (
+                          <strong className="font-bold text-gray-900">
+                            {children}
+                          </strong>
+                        ),
+                        em: ({ children }) => (
+                          <em className="italic text-gray-700">{children}</em>
+                        ),
+                        code: ({ children }) => (
+                          <code className="bg-gray-100 text-gray-900 px-2 py-1 rounded text-sm font-mono">
+                            {children}
+                          </code>
+                        ),
+                        pre: ({ children }) => (
+                          <pre className="bg-gray-100 p-4 rounded-lg overflow-x-auto mb-4">
+                            {children}
+                          </pre>
+                        ),
+                        h1: ({ children }) => (
+                          <h1 className="text-2xl font-bold text-gray-900 mb-4 mt-6 first:mt-0">
+                            {children}
+                          </h1>
+                        ),
+                        h2: ({ children }) => (
+                          <h2 className="text-xl font-bold text-gray-900 mb-3 mt-5 first:mt-0">
+                            {children}
+                          </h2>
+                        ),
+                        h3: ({ children }) => (
+                          <h3 className="text-lg font-bold text-gray-900 mb-2 mt-4 first:mt-0">
+                            {children}
+                          </h3>
+                        ),
+                        h4: ({ children }) => (
+                          <h4 className="text-base font-bold text-gray-900 mb-2 mt-3 first:mt-0">
+                            {children}
+                          </h4>
+                        ),
+                        ul: ({ children }) => (
+                          <ul className="list-disc list-inside mb-4 space-y-2 pl-4">
+                            {children}
+                          </ul>
+                        ),
+                        ol: ({ children }) => (
+                          <ol className="list-decimal list-inside mb-4 space-y-2 pl-4">
+                            {children}
+                          </ol>
+                        ),
+                        li: ({ children }) => (
+                          <li className="text-gray-800 leading-relaxed">
+                            {children}
+                          </li>
+                        ),
+                        blockquote: ({ children }) => (
+                          <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-700 mb-4">
+                            {children}
+                          </blockquote>
+                        ),
+                        a: ({ children, href }) => (
+                          <a
+                            href={href}
+                            className="text-blue-600 hover:text-blue-800 underline"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {children}
+                          </a>
+                        ),
+                        table: ({ children }) => (
+                          <div className="overflow-x-auto mb-4">
+                            <table className="min-w-full border border-gray-300 rounded-lg">
+                              {children}
+                            </table>
+                          </div>
+                        ),
+                        thead: ({ children }) => (
+                          <thead className="bg-gray-50">{children}</thead>
+                        ),
+                        th: ({ children }) => (
+                          <th className="border border-gray-300 px-4 py-2 text-left font-semibold">
+                            {children}
+                          </th>
+                        ),
+                        td: ({ children }) => (
+                          <td className="border border-gray-300 px-4 py-2">
+                            {children}
+                          </td>
+                        ),
                       }}
                     >
                       {message.content}
@@ -644,16 +898,50 @@ export default function ChatInterface() {
               <div className="prose prose-blue prose-lg max-w-none">
                 <ReactMarkdown
                   components={{
-                    p: ({ children }) => <p className="mb-4 last:mb-0">{children}</p>,
-                    strong: ({ children }) => <strong className="font-bold text-blue-900">{children}</strong>,
-                    em: ({ children }) => <em className="italic text-blue-700">{children}</em>,
-                    code: ({ children }) => <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-sm font-mono">{children}</code>,
-                    h1: ({ children }) => <h1 className="text-xl font-bold text-blue-900 mb-3">{children}</h1>,
-                    h2: ({ children }) => <h2 className="text-lg font-bold text-blue-900 mb-2">{children}</h2>,
-                    h3: ({ children }) => <h3 className="text-base font-bold text-blue-900 mb-2">{children}</h3>,
-                    ul: ({ children }) => <ul className="list-disc list-inside mb-4 space-y-1">{children}</ul>,
-                    ol: ({ children }) => <ol className="list-decimal list-inside mb-4 space-y-1">{children}</ol>,
-                    li: ({ children }) => <li className="text-blue-800">{children}</li>,
+                    p: ({ children }) => (
+                      <p className="mb-4 last:mb-0">{children}</p>
+                    ),
+                    strong: ({ children }) => (
+                      <strong className="font-bold text-blue-900">
+                        {children}
+                      </strong>
+                    ),
+                    em: ({ children }) => (
+                      <em className="italic text-blue-700">{children}</em>
+                    ),
+                    code: ({ children }) => (
+                      <code className="bg-blue-100 text-blue-900 px-2 py-1 rounded text-sm font-mono">
+                        {children}
+                      </code>
+                    ),
+                    h1: ({ children }) => (
+                      <h1 className="text-xl font-bold text-blue-900 mb-3">
+                        {children}
+                      </h1>
+                    ),
+                    h2: ({ children }) => (
+                      <h2 className="text-lg font-bold text-blue-900 mb-2">
+                        {children}
+                      </h2>
+                    ),
+                    h3: ({ children }) => (
+                      <h3 className="text-base font-bold text-blue-900 mb-2">
+                        {children}
+                      </h3>
+                    ),
+                    ul: ({ children }) => (
+                      <ul className="list-disc list-inside mb-4 space-y-1">
+                        {children}
+                      </ul>
+                    ),
+                    ol: ({ children }) => (
+                      <ol className="list-decimal list-inside mb-4 space-y-1">
+                        {children}
+                      </ol>
+                    ),
+                    li: ({ children }) => (
+                      <li className="text-blue-800">{children}</li>
+                    ),
                   }}
                 >
                   {interruptData.question}

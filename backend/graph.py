@@ -1,9 +1,10 @@
 from typing import TypedDict, Annotated, List, Dict, Any, Optional
 from langgraph.graph import StateGraph, START, END
-from langgraph.types import interrupt
+from langgraph.graph.message import add_messages
+from langgraph.types import interrupt, Command
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_ibm import ChatWatsonx
-from langchain.schema import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, AnyMessage
 import os
 from datetime import datetime
 import json
@@ -14,6 +15,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+os.environ["LANGCHAIN_API_KEY"] = "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"
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+os.environ["LANGCHAIN_PROJECT"] = "apextestmock"
+
 
 # Initialize IBM Watson LLM
 def get_watson_llm():
@@ -23,9 +29,10 @@ def get_watson_llm():
             url=os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
             apikey=os.getenv("WATSONX_API_KEY"),
             project_id=os.getenv("WATSONX_PROJECT_ID"),
+            streaming=True,
             params={
                 "temperature": 0.7,
-                "max_tokens": 1000,
+                "max_tokens": 8000,
                 "top_p": 0.9,
             },
         )
@@ -39,6 +46,12 @@ class MockLLM:
     """Mock LLM for demo purposes when Watson is not available"""
 
     def invoke(self, messages):
+        return self._get_response(messages)
+
+    async def ainvoke(self, messages):
+        return self._get_response(messages)
+
+    def _get_response(self, messages):
         class MockResponse:
             def __init__(self, content):
                 self.content = content
@@ -74,6 +87,7 @@ class MockLLM:
 
 # State definition for the intelligent research assistant
 class ResearchState(TypedDict):
+    messages: Annotated[List[AnyMessage], add_messages]  # LangGraph messages pattern
     user_query: str
     research_plan: str
     research_results: List[str]
@@ -82,21 +96,35 @@ class ResearchState(TypedDict):
     current_step: str
     requires_user_input: bool
     interrupt_data: Optional[Dict[str, Any]]
-    conversation_history: List[Dict[str, str]]
     user_choice: Optional[str]  # Add this field for interrupt responses
     # Fields for follow-up support
-    previous_query: Optional[str]
-    previous_response: Optional[str]
+    format_choice: Optional[str]  # User's preferred response format
+    research_direction: Optional[str]  # Direction for further research
 
 
-# Node 1: Research Planning Interrupt
-def research_planner_interrupt(state: ResearchState) -> Dict[str, Any]:
+# Node 1: Research Planning with Interrupt
+async def research_planner_interrupt(state: ResearchState) -> Dict[str, Any]:
     """Interrupts to get user approval for research plan"""
     print("🔍 Planning research strategy...")
 
-    # Check if this is a follow-up question
-    previous_query = state.get("previous_query", "")
-    previous_response = state.get("previous_response", "")
+    # Check if this is a follow-up question by examining message history
+    messages = state.get("messages", [])
+    has_previous_conversation = len(messages) > 0
+
+    # Extract previous context from messages if available
+    previous_query = ""
+    previous_response = ""
+
+    if has_previous_conversation:
+        # Find the last user and assistant message pair
+        user_messages = [msg for msg in messages if isinstance(msg, HumanMessage)]
+        ai_messages = [msg for msg in messages if isinstance(msg, AIMessage)]
+
+        if user_messages:
+            previous_query = user_messages[-1].content
+        if ai_messages:
+            previous_response = ai_messages[-1].content
+
     is_followup = bool(previous_query and previous_response)
 
     if is_followup:
@@ -136,9 +164,13 @@ How would you like me to approach this research?"""
 
     print(f"DEBUG: User selected in research_planner_interrupt: {user_choice}")
 
+    # Add the current user query to messages
+    new_messages = [HumanMessage(content=state["user_query"])]
+
     # Make sure to preserve all existing state and add the new fields
     return {
         **state,  # Preserve all existing state
+        "messages": new_messages,  # Add user message to conversation
         "research_plan": "Comprehensive research and analysis",
         "user_choice": user_choice,
         "current_step": "information_gathering",
@@ -146,7 +178,7 @@ How would you like me to approach this research?"""
 
 
 # Node 2: Information Gathering
-def information_gatherer(state: ResearchState) -> Dict[str, Any]:
+async def information_gatherer(state: ResearchState) -> Dict[str, Any]:
     """Gathers information based on the approved research plan"""
     print("📚 Gathering information...")
 
@@ -169,41 +201,61 @@ def information_gatherer(state: ResearchState) -> Dict[str, Any]:
 
     llm = get_watson_llm()
 
-    # Check if this is a follow-up with context
-    previous_query = state.get("previous_query", "")
-    previous_response = state.get("previous_response", "")
-    has_context = bool(previous_query and previous_response)
+    # Check if this is a follow-up with context from messages
+    messages = state.get("messages", [])
+    has_context = len(messages) > 1  # More than just the current user message
+
+    # Extract previous context from messages if available
+    previous_query = ""
+    previous_response = ""
+
+    if has_context:
+        # Find the last user and assistant message pair (before current)
+        user_messages = [msg for msg in messages if isinstance(msg, HumanMessage)]
+        ai_messages = [msg for msg in messages if isinstance(msg, AIMessage)]
+
+        if len(user_messages) > 1:  # Previous user message exists
+            previous_query = user_messages[-2].content  # Second to last
+        if ai_messages:  # Previous assistant response exists
+            previous_response = ai_messages[-1].content
+
+    # Prepare context-aware prompts for follow-up questions
+    context_section = ""
+    if has_context:
+        context_section = f"""
+        
+Previous conversation context:
+- Previous question: {previous_query}
+- Previous response summary: {previous_response[:400]}...
+
+Consider this context when generating research findings."""
 
     # Adjust research depth based on user choice
     if user_choice == "simplified":
-        system_prompt = """You are a research assistant providing simplified analysis. 
-        Generate 2-3 key findings that directly address the user's question with clear, concise information."""
+        system_prompt = f"""You are a research assistant providing simplified analysis. 
+        Generate 2-3 key findings that directly address the user's question with clear, concise information.{context_section}"""
     elif user_choice == "focused":
-        system_prompt = """You are a research assistant focusing on specific aspects.
-        Generate targeted findings that address the most important aspects of the user's question."""
-    elif user_choice == "continue_context" and has_context:
+        system_prompt = f"""You are a research assistant focusing on specific aspects.
+        Generate targeted findings that address the most important aspects of the user's question.{context_section}"""
+    elif user_choice == "continue_context":
         system_prompt = f"""You are a research assistant building on previous conversation context.
-        
-        Previous discussion:
-        - Previous question: {previous_query}
-        - Previous response summary: {previous_response[:500]}...
-        
         Generate research findings that build upon this context while addressing the current question.
-        Provide 3-4 focused findings that connect to the previous discussion."""
+        Provide 3-4 focused findings that connect to the previous discussion.{context_section}"""
     else:
-        system_prompt = """You are a thorough research assistant. 
+        system_prompt = f"""You are a thorough research assistant. 
         Generate comprehensive research findings covering multiple aspects of the user's question.
-        Provide 4-5 detailed findings with supporting information."""
+        Provide 4-5 detailed findings with supporting information.{context_section}"""
 
-    # Prepare the research query with context if needed
-    if user_choice == "continue_context" and has_context:
+    # Prepare the research query with context for all follow-up questions
+    if has_context:
         research_query = f"""Current question: {state['user_query']}
 
 Previous context:
 - Previous question: {previous_query}
 - Previous response: {previous_response[:300]}...
 
-Please research the current question while considering the previous context."""
+Research approach: {user_choice}
+Please research the current question while considering the previous context and approach preference."""
     else:
         research_query = f"Research query: {state['user_query']}\nResearch plan: {state.get('research_plan', 'Standard research')}"
 
@@ -212,7 +264,7 @@ Please research the current question while considering the previous context."""
         HumanMessage(content=research_query),
     ]
 
-    response = llm.invoke(messages)
+    response = await llm.ainvoke(messages)
 
     # Simulate multiple research findings
     base_findings = response.content.split("\n")[:3]  # Take first 3 lines as findings
@@ -222,7 +274,7 @@ Please research the current question while considering the previous context."""
         if finding.strip()
     ]
 
-    # Add simulated additional findings
+    # Add simulated additional findings based on research approach
     if user_choice == "proceed":
         research_results.extend(
             [
@@ -230,9 +282,11 @@ Please research the current question while considering the previous context."""
                 "Finding 5: Current trends and recent developments identified",
             ]
         )
-    elif user_choice == "continue_context" and has_context:
+
+    # For ALL follow-up questions, add context integration finding
+    if has_context:
         research_results.append(
-            f"Finding {len(research_results)+1}: Context integration - Connected insights from previous discussion about {previous_query[:50]}..."
+            f"Finding {len(research_results)+1}: Context integration - Connected insights from previous discussion about '{previous_query[:50]}...'"
         )
 
     return {
@@ -243,18 +297,20 @@ Please research the current question while considering the previous context."""
 
 
 # Node 3: Research Direction Interrupt
-def research_direction_interrupt(state: ResearchState) -> Dict[str, Any]:
+async def research_direction_interrupt(state: ResearchState) -> Dict[str, Any]:
     """Interrupts to ask for research direction refinement"""
     print("🔄 Checking research direction...")
 
-    # Only interrupt if user chose "proceed" (for comprehensive research)
+    # Only interrupt if user chose "proceed" or other comprehensive options (for detailed research)
     user_choice = state.get("user_choice", "proceed")
 
-    if user_choice == "proceed":
-        # Check if this is a follow-up conversation
-        has_context = bool(
-            state.get("previous_query") and state.get("previous_response")
-        )
+    # Trigger interrupt for comprehensive research choices
+    comprehensive_choices = ["proceed", "comprehensive"]
+
+    if user_choice in comprehensive_choices:
+        # Check if this is a follow-up conversation from messages
+        messages = state.get("messages", [])
+        has_context = len(messages) > 1  # More than just the current user message
 
         if has_context:
             direction_msg = """## Research Direction Refinement
@@ -293,15 +349,31 @@ Which direction interests you most?"""
         }
     else:
         # Skip this interrupt for simplified/focused research
-        return {
-            **state,  # Preserve all existing state
-            "research_direction": "continue",
-            "current_step": "analysis",
-        }
+        # But check if this is a follow-up conversation with context from messages
+        messages = state.get("messages", [])
+        has_context = len(messages) > 1  # More than just the current user message
+
+        if has_context:
+            # For follow-up questions, automatically use context-aware direction
+            print(
+                "DEBUG: Follow-up detected, setting research_direction to 'continue_context'"
+            )
+            return {
+                **state,  # Preserve all existing state
+                "research_direction": "continue_context",
+                "current_step": "analysis",
+            }
+        else:
+            # Regular new conversation without context
+            return {
+                **state,  # Preserve all existing state
+                "research_direction": "continue",
+                "current_step": "analysis",
+            }
 
 
 # Node 4: Deep Analysis
-def deep_analyzer(state: ResearchState) -> Dict[str, Any]:
+async def deep_analyzer(state: ResearchState) -> Dict[str, Any]:
     """Performs deep analysis of gathered information"""
     print("🧠 Analyzing information...")
 
@@ -310,10 +382,23 @@ def deep_analyzer(state: ResearchState) -> Dict[str, Any]:
     research_summary = "\n".join(state.get("research_results", []))
     research_direction = state.get("research_direction", "continue")
 
-    # Check for previous context
-    previous_query = state.get("previous_query", "")
-    previous_response = state.get("previous_response", "")
-    has_context = bool(previous_query and previous_response)
+    # Check for previous context from messages
+    messages = state.get("messages", [])
+    has_context = len(messages) > 1  # More than just the current user message
+
+    # Extract previous context from messages if available
+    previous_query = ""
+    previous_response = ""
+
+    if has_context:
+        # Find the last user and assistant message pair (before current)
+        user_messages = [msg for msg in messages if isinstance(msg, HumanMessage)]
+        ai_messages = [msg for msg in messages if isinstance(msg, AIMessage)]
+
+        if len(user_messages) > 1:  # Previous user message exists
+            previous_query = user_messages[-2].content  # Second to last
+        if ai_messages:  # Previous assistant response exists
+            previous_response = ai_messages[-1].content
 
     # Adjust system prompt based on research direction and context
     if research_direction == "continue_context" and has_context:
@@ -355,7 +440,7 @@ Current research findings to analyze:
         HumanMessage(content=content),
     ]
 
-    response = llm.invoke(messages)
+    response = await llm.ainvoke(messages)
     analysis = response.content
 
     return {
@@ -366,10 +451,34 @@ Current research findings to analyze:
 
 
 # Node 5: Format Selection Interrupt
-def format_selection_interrupt(state: ResearchState) -> Dict[str, Any]:
+async def format_selection_interrupt(state: ResearchState) -> Dict[str, Any]:
     """Interrupts to get formatting preference"""
     print("📝 Format selection...")
 
+    # Check if user_choice contains a format choice (for streaming scenarios)
+    user_choice = state.get("user_choice", "")
+    format_choices = [
+        "comprehensive",
+        "executive",
+        "structured",
+        "conversational",
+        "bullet_points",
+    ]
+
+    print(f"DEBUG: Current user_choice: {user_choice}")
+    print(f"DEBUG: Format choices: {format_choices}")
+    print(f"DEBUG: Is user_choice in format_choices: {user_choice in format_choices}")
+
+    if user_choice in format_choices:
+        # User already provided format choice, skip interrupt
+        print(f"Format already chosen: {user_choice}")
+        return {
+            **state,  # Preserve all existing state
+            "format_choice": user_choice,
+            "current_step": "response_formatting",
+        }
+
+    print("DEBUG: No format choice found, showing interrupt...")
     analysis = state.get("analysis", "")
     analysis_preview = analysis[:300] + "..." if len(analysis) > 300 else analysis
 
@@ -398,9 +507,9 @@ Which presentation style would be most helpful for you?"""
     }
 
 
-# Node 4: Response Generation
-def response_generator(state: ResearchState) -> Dict[str, Any]:
-    """Generates the final formatted response"""
+# Node 6: Response Generation
+async def response_generator(state: ResearchState) -> Dict[str, Any]:
+    """Generates the final formatted response with streaming support"""
     print("✍️ Crafting final response...")
 
     llm = get_watson_llm()
@@ -409,9 +518,23 @@ def response_generator(state: ResearchState) -> Dict[str, Any]:
     format_choice = state.get("format_choice", "comprehensive")
     research_direction = state.get("research_direction", "continue")
 
-    # Check for previous context
-    previous_query = state.get("previous_query", "")
-    previous_response = state.get("previous_response", "")
+    # Check for previous context from messages
+    messages = state.get("messages", [])
+    has_context = len(messages) > 1  # More than just the current user message
+
+    # Extract previous context from messages if available
+    previous_query = ""
+    previous_response = ""
+
+    if has_context:
+        # Find the last user and assistant message pair (before current)
+        user_messages = [msg for msg in messages if isinstance(msg, HumanMessage)]
+        ai_messages = [msg for msg in messages if isinstance(msg, AIMessage)]
+
+        if len(user_messages) > 1:  # Previous user message exists
+            previous_query = user_messages[-2].content  # Second to last
+        if ai_messages:  # Previous assistant response exists
+            previous_response = ai_messages[-1].content
     has_context = bool(previous_query and previous_response)
 
     format_instructions = {
@@ -422,14 +545,28 @@ def response_generator(state: ResearchState) -> Dict[str, Any]:
         "bullet_points": "Organize the response primarily using bullet points, numbered lists, and key takeaways for quick reference.",
     }
 
-    # Adjust system prompt for context-aware responses
-    if research_direction == "continue_context" and has_context:
+    # For follow-up questions, always use context-aware prompts regardless of research direction
+    if has_context:
+        # Add direction-specific guidance for follow-up questions
+        direction_guidance = ""
+        if research_direction == "technical":
+            direction_guidance = "Focus on technical aspects, implementation details, and mathematical/scientific foundations while building on previous context."
+        elif research_direction == "practical":
+            direction_guidance = "Emphasize real-world applications, use cases, and practical implications while connecting to previous insights."
+        elif research_direction == "recent":
+            direction_guidance = "Highlight latest developments and current trends while relating to our previous discussion."
+        elif research_direction == "comparative":
+            direction_guidance = "Compare different approaches or solutions while building on the foundation from our previous conversation."
+        else:
+            direction_guidance = "Provide a comprehensive analysis that builds specifically on our previous conversation context."
+
         system_prompt = f"""You are creating a follow-up response that builds on previous conversation context. 
 
         Previous conversation:
         - Question: {previous_query}
         - Response: {previous_response[:300]}...
 
+        Research Direction: {direction_guidance}
         Formatting style: {format_instructions.get(format_choice, format_instructions["comprehensive"])}
         
         Requirements:
@@ -473,24 +610,19 @@ def response_generator(state: ResearchState) -> Dict[str, Any]:
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=context)]
 
-    response = llm.invoke(messages)
+    # Use normal invoke - streaming will be handled by astream_events
+    response = await llm.ainvoke(messages)
     final_response = response.content
 
-    # Add conversation to history
-    conversation_history = state.get("conversation_history", [])
-    conversation_history.extend(
-        [
-            {"role": "user", "content": state["user_query"]},
-            {"role": "assistant", "content": final_response},
-        ]
-    )
+    # Add the assistant's response to the conversation messages
+    new_messages = [AIMessage(content=final_response)]
 
     return {
         **state,  # Preserve all existing state
+        "messages": new_messages,  # Add assistant message to conversation
         "final_response": final_response,
         "current_step": "completed",
         "requires_user_input": False,
-        "conversation_history": conversation_history,
     }
 
 
@@ -523,3 +655,70 @@ def create_research_graph():
 
 # Create the compiled graph
 research_graph = create_research_graph()
+
+
+# Streaming function for the research assistant
+async def stream_research_response(thread_id: str, user_choice: str):
+    """Stream the research workflow response with focus on final response generation"""
+    print(f"\n📝 Starting streaming research for thread: {thread_id}")
+    print(f"User choice: {user_choice}")
+
+    config = {"configurable": {"thread_id": thread_id}}
+
+    # Define nodes where we want to stream content
+    STREAMING_NODES = {
+        "response_generator",  # Stream the final response generation
+    }
+
+    try:
+        # Check if user_choice is a format choice and update state accordingly
+        format_choices = [
+            "comprehensive",
+            "executive",
+            "structured",
+            "conversational",
+            "bullet_points",
+        ]
+
+        if user_choice in format_choices:
+            # Get current state and update it with the format choice
+            current_state = research_graph.get_state(config)
+            if current_state.values:
+                # Update the state to include the format choice
+                updated_state = {
+                    **current_state.values,
+                    "format_choice": user_choice,
+                    "user_choice": user_choice,
+                }
+                # Update the state in the graph
+                research_graph.update_state(config, updated_state)
+
+        # Resume the graph with the user's choice using Command
+        # Use astream_events to capture streaming content during resume
+        async for event in research_graph.astream_events(
+            Command(resume=user_choice), version="v2", config=config
+        ):
+            # Stream LLM content from specified nodes
+            if event["event"] == "on_chat_model_stream":
+                current_node = event.get("metadata", {}).get("langgraph_node")
+                if current_node in STREAMING_NODES:
+                    data = event["data"]
+                    chunk = data["chunk"]
+                    if hasattr(chunk, "content") and chunk.content:
+                        yield {
+                            "content": chunk.content,
+                            "type": "content",
+                            "done": False,
+                            "node": current_node,
+                        }
+
+        # Final completion signal
+        yield {"content": "", "type": "content", "done": True}
+
+    except Exception as e:
+        print(f"Streaming error: {str(e)}")
+        yield {
+            "content": f"Error in streaming: {str(e)}",
+            "type": "error",
+            "done": True,
+        }
