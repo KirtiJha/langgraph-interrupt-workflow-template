@@ -60,8 +60,14 @@ cd backend
 python -m venv langgraph-interrupt
 source langgraph-interrupt/bin/activate  # On Windows: langgraph-interrupt\Scripts\activate
 
+# Upgrade pip
+pip install --upgrade pip
+
 # Install dependencies
 pip install -r requirements.txt
+
+# For development (optional)
+pip install -r requirements-dev.txt
 
 # Create environment file
 cp .env.example .env
@@ -107,7 +113,9 @@ LANGCHAIN_PROJECT=your_project_name
 
 ## 🚀 Running the Application
 
-### Start Backend Server
+### Option 1: Local Development
+
+#### Start Backend Server
 ```bash
 cd backend
 source langgraph-interrupt/bin/activate
@@ -115,11 +123,24 @@ python main.py
 # Server runs on http://localhost:8000
 ```
 
-### Start Frontend Server
+#### Start Frontend Server
 ```bash
 cd frontend
 npm run dev
 # Frontend runs on http://localhost:3000
+```
+
+### Option 2: Docker (Recommended for Production)
+
+```bash
+# Copy environment file
+cp backend/.env.example backend/.env
+# Edit backend/.env with your credentials
+
+# Build and run with Docker Compose
+docker-compose up --build
+
+# Access the application at http://localhost:8000
 ```
 
 ## 📖 Understanding LangGraph Interrupts
@@ -203,6 +224,30 @@ def get_llm():
     return ChatOpenAI(model="gpt-4")  # or your preferred model
 ```
 
+## 🧪 Testing
+
+### Backend Tests
+```bash
+cd backend
+source langgraph-interrupt/bin/activate
+python -m pytest test_main.py -v
+```
+
+### Frontend Tests (Future)
+```bash
+cd frontend
+npm test
+```
+
+### End-to-End Testing
+1. Start both backend and frontend
+2. Navigate to http://localhost:3000
+3. Test the complete interrupt flow:
+   - Start a conversation
+   - Verify interrupt appears
+   - Select options and resume
+   - Check final response
+
 ## 🧪 Example Use Cases
 
 This interrupt framework can be adapted for various scenarios:
@@ -222,7 +267,10 @@ langgraph-interrupt-app/
 │   ├── main.py              # FastAPI application
 │   ├── graph.py             # LangGraph workflow definition
 │   ├── requirements.txt     # Python dependencies
-│   └── .env                 # Environment variables
+│   ├── requirements-dev.txt # Development dependencies
+│   ├── test_main.py         # Basic tests
+│   ├── .env.example         # Environment template
+│   └── .env                 # Environment variables (create from example)
 ├── frontend/
 │   ├── app/
 │   │   ├── page.tsx         # Main chat interface
@@ -230,8 +278,18 @@ langgraph-interrupt-app/
 │   │   └── globals.css      # Global styles
 │   ├── package.json         # Node.js dependencies
 │   └── tailwind.config.js   # Tailwind configuration
+├── .github/
+│   └── ISSUE_TEMPLATE/      # GitHub issue templates
+│       ├── bug_report.md
+│       └── feature_request.md
 ├── .gitignore              # Git ignore rules
-└── README.md               # This file
+├── CHANGELOG.md            # Version history
+├── CONTRIBUTING.md         # Contribution guidelines
+├── Dockerfile              # Docker configuration
+├── docker-compose.yml      # Docker Compose setup
+├── LICENSE                 # MIT License
+├── README.md               # This file
+└── SECURITY.md             # Security policy
 ```
 
 ## 🤝 Contributing

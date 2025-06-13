@@ -1,0 +1,18 @@
+# Development dependencies for testing and code quality
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0
+pre-commit>=3.3.0
+
+# API testing
+httpx>=0.24.0
+pytest-httpx>=0.22.0
+
+# Code coverage
+pytest-cov>=4.1.0
+
+# Documentation
+mkdocs>=1.5.0
+mkdocs-material>=9.0.0

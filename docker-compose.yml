@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  langgraph-app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - WATSONX_URL=${WATSONX_URL}
+      - WATSONX_API_KEY=${WATSONX_API_KEY}
+      - WATSONX_PROJECT_ID=${WATSONX_PROJECT_ID}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
+    env_file:
+      - backend/.env
+    volumes:
+      - ./data:/app/data # For persistent state if needed
+    restart: unless-stopped
+
+  # Optional: Add a reverse proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - langgraph-app
+    restart: unless-stopped
+    profiles:
+      - production
