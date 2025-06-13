@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-gray-50 text-gray-900;
+  }
+}
+
+@layer components {
+  .chat-message {
+    @apply animate-slide-up;
+  }
+
+  .interrupt-card {
+    @apply bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6 shadow-soft;
+  }
+
+  .progress-step {
+    @apply transition-all duration-300 ease-in-out;
+  }
+
+  .progress-step.active {
+    @apply scale-110 shadow-soft;
+  }
+
+  .message-bubble {
+    @apply rounded-2xl px-6 py-4 max-w-2xl shadow-soft;
+  }
+
+  .assistant-message {
+    @apply bg-white border border-gray-100;
+  }
+
+  .user-message {
+    @apply bg-gradient-to-r from-primary-500 to-primary-600 text-white;
+  }
+
+  .system-message {
+    @apply bg-gradient-to-r from-orange-50 to-yellow-50 border border-orange-200 text-orange-900;
+  }
+
+  .option-button {
+    @apply p-4 text-left rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 transition-all duration-200 hover:shadow-soft hover:scale-105;
+  }
+
+  .input-field {
+    @apply px-6 py-4 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 shadow-soft;
+  }
+
+  .send-button {
+    @apply px-8 py-4 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-soft hover:shadow-soft-lg hover:scale-105;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary-600 to-secondary-600 bg-clip-text text-transparent;
+  }
+
+  .bg-mesh {
+    background-image: radial-gradient(
+        circle at 25% 25%,
+        rgba(59, 130, 246, 0.1) 0%,
+        transparent 50%
+      ),
+      radial-gradient(
+        circle at 75% 75%,
+        rgba(217, 70, 239, 0.1) 0%,
+        transparent 50%
+      );
+  }
+}
