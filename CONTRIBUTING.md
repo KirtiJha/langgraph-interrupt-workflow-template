@@ -1,14 +1,14 @@
-# Contributing to LangGraph Interrupt Demo
+# Contributing to LangGraph Interrupt Workflow Template
 
-Thank you for your interest in contributing! This document provides guidelines for contributing to this project.
+Thank you for your interest in contributing! This project serves as a **production-ready template** for building human-in-the-loop AI workflows with LangGraph interrupts.
 
 ## 🚀 Quick Start
 
 1. **Fork the repository**
 2. **Clone your fork**
    ```bash
-   git clone https://github.com/yourusername/langgraph-interrupt-app.git
-   cd langgraph-interrupt-app
+   git clone https://github.com/yourusername/langgraph-interrupt-workflow-template.git
+   cd langgraph-interrupt-workflow-template
    ```
 3. **Set up development environment** (see README.md)
 4. **Create a feature branch**
@@ -82,25 +82,28 @@ We welcome feature suggestions! Please:
 
 ## 🎯 Areas for Contribution
 
-### High Priority
-- [ ] Additional interrupt types (file upload, drawing, etc.)
-- [ ] More LLM provider integrations
-- [ ] Workflow visualization components
+### High Priority - Template Improvements
+- [ ] Additional interrupt type templates (file upload, drawing, etc.)
+- [ ] More LLM provider integration examples
+- [ ] Alternative workflow templates (content review, data processing, etc.)
+- [ ] Enhanced UI component library
 - [ ] Performance optimizations
-- [ ] Better error handling
+- [ ] Better error handling patterns
 
-### Medium Priority
+### Medium Priority - Developer Experience  
 - [ ] Mobile-responsive improvements
 - [ ] Accessibility enhancements
-- [ ] Internationalization (i18n)
-- [ ] Advanced state management
+- [ ] Internationalization (i18n) support
+- [ ] Advanced state management patterns
 - [ ] Webhook support for external interrupts
+- [ ] Visual workflow designer
 
-### Documentation
-- [ ] Video tutorials
-- [ ] More use case examples
+### Documentation & Examples
+- [ ] Video tutorials for template customization
+- [ ] More use case examples and templates
 - [ ] API reference improvements
-- [ ] Architecture deep-dive
+- [ ] Architecture deep-dive documentation
+- [ ] Deployment guides for different platforms
 
 ## 🛠️ Development Setup
 
