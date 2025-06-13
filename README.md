@@ -1,5 +1,12 @@
 # LangGraph Interrupt Demo
 
+[![LangGraph](https://img.shields.io/badge/LangGraph-Human--in--the--Loop-blue)](https://langchain-ai.github.io/langgraph/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A comprehensive demonstration of **LangGraph's human-in-the-loop interrupt functionality** with a modern web interface. This project showcases how to build interactive AI workflows that can pause execution, request user input, and resume processing based on user decisions.
 
 ## 🚀 Features
