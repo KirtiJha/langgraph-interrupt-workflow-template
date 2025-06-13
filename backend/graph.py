@@ -14,11 +14,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-os.environ["LANGCHAIN_API_KEY"] = "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"
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
-os.environ["LANGCHAIN_PROJECT"] = "apextestmock"
-
 
 # Initialize IBM Watson LLM
 def get_watson_llm():
@@ -89,6 +84,9 @@ class ResearchState(TypedDict):
     interrupt_data: Optional[Dict[str, Any]]
     conversation_history: List[Dict[str, str]]
     user_choice: Optional[str]  # Add this field for interrupt responses
+    # Fields for follow-up support
+    previous_query: Optional[str]
+    previous_response: Optional[str]
 
 
 # Node 1: Research Planning Interrupt
@@ -96,8 +94,32 @@ def research_planner_interrupt(state: ResearchState) -> Dict[str, Any]:
     """Interrupts to get user approval for research plan"""
     print("🔍 Planning research strategy...")
 
-    # ALWAYS interrupt for every query - this matches your original pattern
-    interrupt_msg = f"""## Research Query Analysis
+    # Check if this is a follow-up question
+    previous_query = state.get("previous_query", "")
+    previous_response = state.get("previous_response", "")
+    is_followup = bool(previous_query and previous_response)
+
+    if is_followup:
+        interrupt_msg = f"""## Follow-up Question Analysis
+
+**Previous Question**: {previous_query}
+
+**Current Question**: {state['user_query']}
+
+I can see this is a follow-up to our previous conversation. I'm ready to research this new question while considering our previous discussion context.
+
+Please choose how you'd like me to proceed:
+
+- **proceed**: Full comprehensive research with detailed analysis
+- **simplified**: Quick overview with key points  
+- **focused**: Targeted research on specific aspects
+- **continue_context**: Build upon our previous conversation
+- **cancel**: Stop the research process
+
+How would you like me to approach this follow-up research?"""
+    else:
+        # Original interrupt message for new conversations
+        interrupt_msg = f"""## Research Query Analysis
 
 I've analyzed your question: **"{state['user_query']}"**
 
@@ -109,7 +131,7 @@ I'm ready to conduct comprehensive research on this topic. Please choose how you
 - **cancel**: Stop the research process
 
 How would you like me to approach this research?"""
-    
+
     user_choice = interrupt(interrupt_msg)
 
     print(f"DEBUG: User selected in research_planner_interrupt: {user_choice}")
@@ -147,6 +169,11 @@ def information_gatherer(state: ResearchState) -> Dict[str, Any]:
 
     llm = get_watson_llm()
 
+    # Check if this is a follow-up with context
+    previous_query = state.get("previous_query", "")
+    previous_response = state.get("previous_response", "")
+    has_context = bool(previous_query and previous_response)
+
     # Adjust research depth based on user choice
     if user_choice == "simplified":
         system_prompt = """You are a research assistant providing simplified analysis. 
@@ -154,16 +181,35 @@ def information_gatherer(state: ResearchState) -> Dict[str, Any]:
     elif user_choice == "focused":
         system_prompt = """You are a research assistant focusing on specific aspects.
         Generate targeted findings that address the most important aspects of the user's question."""
+    elif user_choice == "continue_context" and has_context:
+        system_prompt = f"""You are a research assistant building on previous conversation context.
+        
+        Previous discussion:
+        - Previous question: {previous_query}
+        - Previous response summary: {previous_response[:500]}...
+        
+        Generate research findings that build upon this context while addressing the current question.
+        Provide 3-4 focused findings that connect to the previous discussion."""
     else:
         system_prompt = """You are a thorough research assistant. 
         Generate comprehensive research findings covering multiple aspects of the user's question.
         Provide 4-5 detailed findings with supporting information."""
 
+    # Prepare the research query with context if needed
+    if user_choice == "continue_context" and has_context:
+        research_query = f"""Current question: {state['user_query']}
+
+Previous context:
+- Previous question: {previous_query}
+- Previous response: {previous_response[:300]}...
+
+Please research the current question while considering the previous context."""
+    else:
+        research_query = f"Research query: {state['user_query']}\nResearch plan: {state.get('research_plan', 'Standard research')}"
+
     messages = [
         SystemMessage(content=system_prompt),
-        HumanMessage(
-            content=f"Research query: {state['user_query']}\nResearch plan: {state.get('research_plan', 'Standard research')}"
-        ),
+        HumanMessage(content=research_query),
     ]
 
     response = llm.invoke(messages)
@@ -184,6 +230,10 @@ def information_gatherer(state: ResearchState) -> Dict[str, Any]:
                 "Finding 5: Current trends and recent developments identified",
             ]
         )
+    elif user_choice == "continue_context" and has_context:
+        research_results.append(
+            f"Finding {len(research_results)+1}: Context integration - Connected insights from previous discussion about {previous_query[:50]}..."
+        )
 
     return {
         **state,  # Preserve all existing state
@@ -201,7 +251,27 @@ def research_direction_interrupt(state: ResearchState) -> Dict[str, Any]:
     user_choice = state.get("user_choice", "proceed")
 
     if user_choice == "proceed":
-        direction_msg = """## Research Direction Refinement
+        # Check if this is a follow-up conversation
+        has_context = bool(
+            state.get("previous_query") and state.get("previous_response")
+        )
+
+        if has_context:
+            direction_msg = """## Research Direction Refinement
+
+I've gathered substantial information on your follow-up question. To provide the most valuable insights that build on our previous conversation, would you like me to explore any specific angle further?
+
+### Available Focus Areas:
+- **technical**: Deep dive into technical aspects and implementation details
+- **practical**: Focus on real-world applications and use cases  
+- **recent**: Emphasize latest developments and current trends
+- **comparative**: Compare different approaches or solutions
+- **continue**: Proceed with general comprehensive analysis
+- **continue_context**: Build specifically on our previous conversation context
+
+Which direction interests you most?"""
+        else:
+            direction_msg = """## Research Direction Refinement
 
 I've gathered substantial information on your topic. To provide the most valuable insights, would you like me to explore any specific angle further?
 
@@ -213,6 +283,7 @@ I've gathered substantial information on your topic. To provide the most valuabl
 - **continue**: Proceed with general comprehensive analysis
 
 Which direction interests you most?"""
+
         direction_choice = interrupt(direction_msg)
 
         return {
@@ -237,20 +308,51 @@ def deep_analyzer(state: ResearchState) -> Dict[str, Any]:
     llm = get_watson_llm()
 
     research_summary = "\n".join(state.get("research_results", []))
+    research_direction = state.get("research_direction", "continue")
 
-    system_prompt = """You are an expert analyst. Your task is to:
-    1. Synthesize the research findings into coherent insights
-    2. Identify patterns, connections, and implications
-    3. Prepare actionable conclusions
-    4. Highlight any potential concerns or limitations
-    
-    Provide a structured analysis that goes beyond summarizing to offer real insight."""
+    # Check for previous context
+    previous_query = state.get("previous_query", "")
+    previous_response = state.get("previous_response", "")
+    has_context = bool(previous_query and previous_response)
+
+    # Adjust system prompt based on research direction and context
+    if research_direction == "continue_context" and has_context:
+        system_prompt = f"""You are an expert analyst building on previous conversation context. Your task is to:
+        1. Connect the current analysis to the previous discussion
+        2. Identify relationships between the previous and current topics
+        3. Synthesize insights that bridge both conversations
+        4. Provide contextual conclusions that show progression
+        
+        Previous conversation context:
+        - Previous question: {previous_query}
+        - Previous response: {previous_response[:400]}...
+        
+        Provide a structured analysis that integrates both conversations."""
+    else:
+        system_prompt = """You are an expert analyst. Your task is to:
+        1. Synthesize the research findings into coherent insights
+        2. Identify patterns, connections, and implications
+        3. Prepare actionable conclusions
+        4. Highlight any potential concerns or limitations
+        
+        Provide a structured analysis that goes beyond summarizing to offer real insight."""
+
+    # Prepare content for analysis
+    if research_direction == "continue_context" and has_context:
+        content = f"""Current query: {state['user_query']}
+        
+Previous context:
+Question: {previous_query}
+Response: {previous_response[:300]}...
+
+Current research findings to analyze:
+{research_summary}"""
+    else:
+        content = f"User query: {state['user_query']}\n\nResearch findings to analyze:\n{research_summary}"
 
     messages = [
         SystemMessage(content=system_prompt),
-        HumanMessage(
-            content=f"User query: {state['user_query']}\n\nResearch findings to analyze:\n{research_summary}"
-        ),
+        HumanMessage(content=content),
     ]
 
     response = llm.invoke(messages)
@@ -286,7 +388,7 @@ I've completed a detailed analysis of your question. Here's a preview:
 - **bullet_points**: Quick reference format with organized lists and takeaways
 
 Which presentation style would be most helpful for you?"""
-    
+
     format_choice = interrupt(format_msg)
 
     return {
@@ -305,6 +407,12 @@ def response_generator(state: ResearchState) -> Dict[str, Any]:
 
     # Get user's preferred format from state
     format_choice = state.get("format_choice", "comprehensive")
+    research_direction = state.get("research_direction", "continue")
+
+    # Check for previous context
+    previous_query = state.get("previous_query", "")
+    previous_response = state.get("previous_response", "")
+    has_context = bool(previous_query and previous_response)
 
     format_instructions = {
         "comprehensive": "Create a thorough, detailed response with examples, explanations, and supporting details. Use clear headings and organize information logically.",
@@ -314,24 +422,54 @@ def response_generator(state: ResearchState) -> Dict[str, Any]:
         "bullet_points": "Organize the response primarily using bullet points, numbered lists, and key takeaways for quick reference.",
     }
 
-    system_prompt = f"""You are creating a final response for the user. 
+    # Adjust system prompt for context-aware responses
+    if research_direction == "continue_context" and has_context:
+        system_prompt = f"""You are creating a follow-up response that builds on previous conversation context. 
 
-    Formatting style: {format_instructions.get(format_choice, format_instructions["comprehensive"])}
-    
-    Requirements:
-    - Directly address the user's original question
-    - Incorporate insights from the analysis
-    - Be informative, accurate, and actionable
-    - Maintain a professional yet approachable tone
-    - Include specific examples where relevant
-    - End with a brief summary or next steps if appropriate
-    """
+        Previous conversation:
+        - Question: {previous_query}
+        - Response: {previous_response[:300]}...
 
-    context = f"""
-    Original question: {state['user_query']}
-    Research findings: {'; '.join(state.get('research_results', []))}
-    Analysis insights: {state.get('analysis', 'N/A')}
-    """
+        Formatting style: {format_instructions.get(format_choice, format_instructions["comprehensive"])}
+        
+        Requirements:
+        - Reference and build upon the previous conversation naturally
+        - Show how the current response connects to previous insights
+        - Address the user's follow-up question thoroughly
+        - Maintain continuity in the conversation flow
+        - Be informative, accurate, and actionable
+        - Include specific examples where relevant
+        - End with a summary that ties both conversations together
+        """
+    else:
+        system_prompt = f"""You are creating a final response for the user. 
+
+        Formatting style: {format_instructions.get(format_choice, format_instructions["comprehensive"])}
+        
+        Requirements:
+        - Directly address the user's original question
+        - Incorporate insights from the analysis
+        - Be informative, accurate, and actionable
+        - Maintain a professional yet approachable tone
+        - Include specific examples where relevant
+        - End with a brief summary or next steps if appropriate
+        """
+
+    # Prepare context information
+    if research_direction == "continue_context" and has_context:
+        context = f"""
+        Current question: {state['user_query']}
+        Previous question: {previous_query}
+        Previous response summary: {previous_response[:200]}...
+        Current research findings: {'; '.join(state.get('research_results', []))}
+        Current analysis insights: {state.get('analysis', 'N/A')}
+        """
+    else:
+        context = f"""
+        Original question: {state['user_query']}
+        Research findings: {'; '.join(state.get('research_results', []))}
+        Analysis insights: {state.get('analysis', 'N/A')}
+        """
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=context)]
 

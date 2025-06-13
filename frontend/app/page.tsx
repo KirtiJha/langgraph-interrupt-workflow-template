@@ -205,15 +205,78 @@ export default function ChatInterface() {
     }
   };
 
+  const continueChat = async (message: string) => {
+    if (!threadId) return;
+
+    setIsLoading(true);
+
+    try {
+      const response = await fetch("http://localhost:8000/continue", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          thread_id: threadId,
+          message: message,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setChatState(data.state);
+      setCurrentStep(data.state.current_step);
+
+      if (data.requires_input && data.interrupt_message) {
+        // Detect interrupt type and set appropriate options
+        let options = ["proceed", "simplified", "focused", "cancel"]; // default for research planning
+        
+        if (data.interrupt_message.includes("Research Direction") || data.interrupt_message.includes("explore any specific angle")) {
+          options = ["technical", "practical", "recent", "comparative", "continue", "continue_context"];
+        } else if (data.interrupt_message.includes("presentation style") || data.interrupt_message.includes("comprehensive") || data.interrupt_message.includes("executive")) {
+          options = ["comprehensive", "executive", "structured", "conversational", "bullet_points"];
+        }
+        
+        // Create interrupt data structure
+        const interruptData = {
+          type: "user_input",
+          message: data.interrupt_message,
+          question: data.interrupt_message,
+          options: options,
+        };
+        setInterruptData(interruptData);
+      } else if (data.state.final_response) {
+        addMessage("assistant", data.state.final_response);
+        setInterruptData(null);
+      }
+    } catch (error) {
+      console.error("Error continuing chat:", error);
+      addMessage(
+        "system",
+        "Sorry, there was an error processing your follow-up question. Please try again."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
 
     if (!threadId) {
       startChat(input);
-    } else {
+    } else if (interruptData) {
+      // If there's interrupt data, we're in the middle of a conversation flow
       addMessage("user", input);
       resumeChat(input);
+    } else {
+      // If there's no interrupt data but we have a threadId, this is a follow-up question
+      addMessage("user", input);
+      continueChat(input);
     }
 
     setInput("");
@@ -246,6 +309,7 @@ export default function ChatInterface() {
                 recent: "📈 Recent - Latest developments and trends",
                 comparative: "⚖️ Comparative - Compare different approaches",
                 continue: "➡️ Continue - General comprehensive analysis",
+                continue_context: "🔗 Continue with Context - Build on previous conversation",
                 // Response format options
                 comprehensive: "📚 Comprehensive - Detailed analysis with examples and explanations",
                 executive: "👔 Executive - Concise summary with key insights and recommendations",

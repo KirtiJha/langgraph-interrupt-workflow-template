@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import TypedDict, Annotated, Union
 import uuid
 import os
+from datetime import datetime
 
 from langgraph.types import Command
 from graph import research_graph, ResearchState
@@ -41,6 +42,11 @@ class ResumeInput(BaseModel):
     thread_id: str
     user_input: str
     choice: str
+
+
+class ContinueInput(BaseModel):
+    thread_id: str
+    message: str
 
 
 @app.post("/start")
@@ -178,6 +184,82 @@ async def resume_research(data: ResumeInput):
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Error resuming research: {str(e)}"
+        )
+
+
+@app.post("/continue")
+async def continue_conversation(data: ContinueInput):
+    """Continues an existing conversation with a new follow-up question."""
+    config = {"configurable": {"thread_id": data.thread_id}}
+    
+    try:
+        # Get the current state to check if conversation exists
+        current_state = research_graph.get_state(config)
+        
+        if not current_state.values:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        
+        # Preserve existing conversation history and add new message
+        existing_history = current_state.values.get("conversation_history", [])
+        existing_history.append({
+            "role": "user", 
+            "content": data.message,
+            "timestamp": str(datetime.now())
+        })
+        
+        # Create new state for follow-up question, preserving context
+        follow_up_state = {
+            "user_query": data.message,  # New question
+            "research_plan": "",  # Reset research fields for new query
+            "research_results": [],
+            "analysis": "",
+            "final_response": "",
+            "current_step": "planning",
+            "requires_user_input": False,
+            "interrupt_data": None,
+            "conversation_history": existing_history,  # Preserve history
+            "user_choice": None,
+            # Keep previous context accessible if needed
+            "previous_query": current_state.values.get("user_query", ""),
+            "previous_response": current_state.values.get("final_response", ""),
+        }
+        
+        # Start the research graph with the new question
+        result = research_graph.invoke(follow_up_state, config)
+        
+        # Get the updated state
+        state = research_graph.get_state(config)
+        
+        # Check for interrupt in the result
+        is_interrupted = False
+        interrupt_message = None
+        
+        if (
+            isinstance(result, dict)
+            and "__interrupt__" in result
+            and result["__interrupt__"]
+        ):
+            is_interrupted = True
+            interrupt_obj = result["__interrupt__"][0]
+            interrupt_message = interrupt_obj.value
+            print(f"DEBUG: Found interrupt in continue result: {interrupt_message}")
+        else:
+            is_interrupted = state.next and len(state.next) > 0
+            if is_interrupted:
+                next_node = state.next[0]
+                interrupt_message = f"Waiting for input for {next_node}..."
+        
+        return {
+            "state": state.values,
+            "next": state.next,
+            "requires_input": is_interrupted,
+            "interrupt_message": interrupt_message,
+            "current_step": state.values.get("current_step", "planning"),
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error continuing conversation: {str(e)}"
         )
 
 
