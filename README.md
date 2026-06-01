@@ -12,16 +12,6 @@
 
 > **Runs with zero configuration.** Clone it and go — a built-in mock model lets you explore the full interrupt flow without any API keys. Add a provider when you're ready.
 
-## 🎬 Demo
-
-<!--
-  Record a short clip of the app pausing at an interrupt and resuming, then save it
-  as assets/demo.gif (or demo.png) and uncomment the line below. See assets/README.md.
--->
-<!-- ![LangGraph interrupt workflow demo](assets/demo.gif) -->
-
-<p align="center"><em>Demo GIF coming soon — see <a href="assets/README.md">assets/README.md</a> to add one.</em></p>
-
 ---
 
 ## ✨ Why this template?
