@@ -1,49 +1,79 @@
-# main.py
-from fastapi import FastAPI, HTTPException
+"""FastAPI server exposing the LangGraph human-in-the-loop research workflow.
+
+The graph is compiled at startup with a checkpointer chosen from the
+environment:
+
+- ``CHECKPOINT_DB=checkpoints.sqlite`` → durable, resumable state via
+  ``AsyncSqliteSaver`` (survives server restarts — LangGraph's durable
+  execution feature).
+- unset → in-memory state via ``MemorySaver`` (great for local dev).
+
+No secrets are hardcoded here; configure everything through environment
+variables (see ``.env.example``).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import uuid
+from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import TypedDict, Annotated, Union
-import uuid
-import os
-import json
-from datetime import datetime
 
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
-from graph import research_graph, ResearchState, stream_research_response
 
-os.environ["LANGCHAIN_API_KEY"] = "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"
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
-os.environ["LANGCHAIN_PROJECT"] = "apextestmock"
+from graph import build_research_graph, stream_research_response
+
+load_dotenv()
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger(__name__)
 
 
-# --- FastAPI App ---
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Compile the graph with a durable checkpointer when configured."""
+    checkpoint_db = os.getenv("CHECKPOINT_DB")
+    if checkpoint_db:
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-# --- CORS Middleware ---
+        logger.info("Using durable AsyncSqliteSaver at %s", checkpoint_db)
+        async with AsyncSqliteSaver.from_conn_string(checkpoint_db) as saver:
+            app.state.graph = build_research_graph(checkpointer=saver)
+            yield
+    else:
+        logger.info("Using in-memory MemorySaver (set CHECKPOINT_DB for durability)")
+        app.state.graph = build_research_graph(checkpointer=MemorySaver())
+        yield
+
+
+app = FastAPI(title="LangGraph Interrupt Workflow Template", lifespan=lifespan)
+
+_allowed_origins = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=[o.strip() for o in _allowed_origins],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
-# --- Pydantic Models ---
+# --- Request models ---------------------------------------------------------
 class ChatInput(BaseModel):
     message: str
 
 
-class ThreadInput(BaseModel):
-    thread_id: str
-
-
 class ResumeInput(BaseModel):
     thread_id: str
-    user_input: str
     choice: str
+    user_input: str | None = None
 
 
 class ContinueInput(BaseModel):
@@ -51,14 +81,28 @@ class ContinueInput(BaseModel):
     message: str
 
 
+# --- Helpers ----------------------------------------------------------------
+def _interrupt_info(result) -> tuple[bool, str | None]:
+    """Extract interrupt status and message from an ainvoke result."""
+    if isinstance(result, dict) and result.get("__interrupt__"):
+        return True, result["__interrupt__"][0].value
+    return False, None
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.post("/start")
-async def start_chat(chat_input: ChatInput):
-    """Starts a new research conversation."""
+async def start_chat(chat_input: ChatInput, request: Request):
+    """Start a new research conversation."""
+    graph = request.app.state.graph
     thread_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}}
 
-    # Initialize the research state
     initial_state = {
+        "messages": [],
         "user_query": chat_input.message,
         "research_plan": "",
         "research_results": [],
@@ -67,38 +111,13 @@ async def start_chat(chat_input: ChatInput):
         "current_step": "planning",
         "requires_user_input": False,
         "interrupt_data": None,
-        "conversation_history": [],
+        "user_choice": None,
     }
 
     try:
-        # Start the research graph with async API
-        result = await research_graph.ainvoke(initial_state, config)
-
-        # Get the current state
-        state = research_graph.get_state(config)
-
-        # Check for interrupt in the result first (this is the correct way according to LangGraph docs)
-        is_interrupted = False
-        interrupt_message = None
-
-        # Check if result contains interrupt data
-        if (
-            isinstance(result, dict)
-            and "__interrupt__" in result
-            and result["__interrupt__"]
-        ):
-            is_interrupted = True
-            # Extract the interrupt message from the first interrupt
-            interrupt_obj = result["__interrupt__"][0]
-            interrupt_message = interrupt_obj.value
-            print(f"DEBUG: Found interrupt in result: {interrupt_message}")
-        else:
-            # Fallback: check if there are next nodes to execute (old method)
-            is_interrupted = state.next and len(state.next) > 0
-            if is_interrupted:
-                next_node = state.next[0]
-                interrupt_message = f"Waiting for input for {next_node}..."
-
+        result = await graph.ainvoke(initial_state, config)
+        state = await graph.aget_state(config)
+        is_interrupted, interrupt_message = _interrupt_info(result)
         return {
             "thread_id": thread_id,
             "state": state.values,
@@ -106,76 +125,44 @@ async def start_chat(chat_input: ChatInput):
             "requires_input": is_interrupted,
             "interrupt_message": interrupt_message,
         }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error starting research: {str(e)}"
-        )
+    except Exception as exc:
+        logger.exception("Error starting research")
+        raise HTTPException(status_code=500, detail=f"Error starting research: {exc}")
 
 
 @app.get("/get_state/{thread_id}")
-async def get_research_state(thread_id: str):
-    """Gets the current state of the research conversation."""
+async def get_research_state(thread_id: str, request: Request):
+    """Get the current state of a conversation."""
+    graph = request.app.state.graph
     config = {"configurable": {"thread_id": thread_id}}
     try:
-        state = research_graph.get_state(config)
-
-        # Check if there are next nodes to execute (indicates an interrupt is pending)
-        is_interrupted = state.next and len(state.next) > 0
-        interrupt_message = None
-
-        if is_interrupted:
-            next_node = state.next[0]
-            # For get_state, we provide a generic message since we don't have the result object
-            # The actual interrupt message was provided when the interrupt was first triggered
-            interrupt_message = f"Waiting for input for {next_node}..."
-
+        state = await graph.aget_state(config)
+        if not state.values:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        is_interrupted = bool(state.next)
+        message = f"Waiting for input for {state.next[0]}..." if is_interrupted else None
         return {
             "state": state.values,
             "next": state.next,
             "requires_input": is_interrupted,
-            "interrupt_message": interrupt_message,
+            "interrupt_message": message,
             "current_step": state.values.get("current_step", "unknown"),
         }
-    except Exception as e:
-        raise HTTPException(
-            status_code=404, detail=f"Thread not found or error getting state: {e}"
-        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Error getting state: {exc}")
 
 
 @app.post("/resume")
-async def resume_research(data: ResumeInput):
-    """Resumes a research conversation with user input."""
+async def resume_research(data: ResumeInput, request: Request):
+    """Resume an interrupted conversation with the user's choice."""
+    graph = request.app.state.graph
     config = {"configurable": {"thread_id": data.thread_id}}
-
     try:
-        # Resume the graph with the user's choice using async API
-        result = await research_graph.ainvoke(Command(resume=data.choice), config)
-
-        # Get the latest state to return
-        state = research_graph.get_state(config)
-
-        # Check for interrupt in the result first (correct way)
-        is_interrupted = False
-        interrupt_message = None
-
-        # Check if result contains interrupt data
-        if (
-            isinstance(result, dict)
-            and "__interrupt__" in result
-            and result["__interrupt__"]
-        ):
-            is_interrupted = True
-            # Extract the interrupt message from the first interrupt
-            interrupt_obj = result["__interrupt__"][0]
-            interrupt_message = interrupt_obj.value
-            print(f"DEBUG: Found interrupt in resume result: {interrupt_message}")
-        else:
-            # Fallback: check if there are next nodes to execute
-            is_interrupted = state.next and len(state.next) > 0
-            if is_interrupted:
-                next_node = state.next[0]
-                interrupt_message = f"Waiting for input for {next_node}..."
-
+        result = await graph.ainvoke(Command(resume=data.choice), config)
+        state = await graph.aget_state(config)
+        is_interrupted, interrupt_message = _interrupt_info(result)
         return {
             "state": state.values,
             "next": state.next,
@@ -183,32 +170,25 @@ async def resume_research(data: ResumeInput):
             "interrupt_message": interrupt_message,
             "current_step": state.values.get("current_step", "completed"),
         }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error resuming research: {str(e)}"
-        )
+    except Exception as exc:
+        logger.exception("Error resuming research")
+        raise HTTPException(status_code=500, detail=f"Error resuming research: {exc}")
 
 
 @app.post("/continue")
-async def continue_conversation(data: ContinueInput):
-    """Continues an existing conversation with a new follow-up question."""
+async def continue_conversation(data: ContinueInput, request: Request):
+    """Continue a finished conversation with a follow-up question."""
+    graph = request.app.state.graph
     config = {"configurable": {"thread_id": data.thread_id}}
-
     try:
-        # Get the current state to check if conversation exists
-        current_state = research_graph.get_state(config)
-
+        current_state = await graph.aget_state(config)
         if not current_state.values:
             raise HTTPException(status_code=404, detail="Thread not found")
 
-        # Get existing messages from the current state (using LangGraph's messages pattern)
-        existing_messages = current_state.values.get("messages", [])
-
-        # Create new state for follow-up question, preserving message history
         follow_up_state = {
-            "messages": existing_messages,  # Preserve conversation messages
-            "user_query": data.message,  # New question
-            "research_plan": "",  # Reset research fields for new query
+            "messages": current_state.values.get("messages", []),
+            "user_query": data.message,
+            "research_plan": "",
             "research_results": [],
             "analysis": "",
             "final_response": "",
@@ -218,31 +198,9 @@ async def continue_conversation(data: ContinueInput):
             "user_choice": None,
         }
 
-        # Start the research graph with the new question using async API
-        result = await research_graph.ainvoke(follow_up_state, config)
-
-        # Get the updated state
-        state = research_graph.get_state(config)
-
-        # Check for interrupt in the result
-        is_interrupted = False
-        interrupt_message = None
-
-        if (
-            isinstance(result, dict)
-            and "__interrupt__" in result
-            and result["__interrupt__"]
-        ):
-            is_interrupted = True
-            interrupt_obj = result["__interrupt__"][0]
-            interrupt_message = interrupt_obj.value
-            print(f"DEBUG: Found interrupt in continue result: {interrupt_message}")
-        else:
-            is_interrupted = state.next and len(state.next) > 0
-            if is_interrupted:
-                next_node = state.next[0]
-                interrupt_message = f"Waiting for input for {next_node}..."
-
+        result = await graph.ainvoke(follow_up_state, config)
+        state = await graph.aget_state(config)
+        is_interrupted, interrupt_message = _interrupt_info(result)
         return {
             "state": state.values,
             "next": state.next,
@@ -250,88 +208,39 @@ async def continue_conversation(data: ContinueInput):
             "interrupt_message": interrupt_message,
             "current_step": state.values.get("current_step", "planning"),
         }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error continuing conversation")
+        raise HTTPException(status_code=500, detail=f"Error continuing conversation: {exc}")
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error continuing conversation: {str(e)}"
-        )
 
+def _stream_response(graph, thread_id: str, choice: str) -> StreamingResponse:
+    async def generate_stream():
+        async for chunk in stream_research_response(graph, thread_id, choice):
+            yield f"data: {json.dumps(chunk)}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'content': '', 'done': True})}\n\n"
 
-@app.get("/conversation_history/{thread_id}")
-async def get_conversation_history(thread_id: str):
-    """Gets the conversation history for a thread."""
-    config = {"configurable": {"thread_id": thread_id}}
-    try:
-        state = research_graph.get_state(config)
-        return {
-            "conversation_history": state.values.get("conversation_history", []),
-            "thread_id": thread_id,
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=404, detail=f"Thread not found or error getting history: {e}"
-        )
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 @app.post("/stream")
-async def stream_research(data: ResumeInput):
-    """Streams the research response from the response_generator node."""
-    config = {"configurable": {"thread_id": data.thread_id}}
-
-    try:
-        # Stream the research response using the graph's streaming capability
-        async def generate_stream():
-            async for chunk in stream_research_response(data.thread_id, data.choice):
-                yield f"data: {json.dumps(chunk)}\n\n"
-            # Send final done message
-            yield f"data: {json.dumps({'type': 'done', 'content': '', 'done': True})}\n\n"
-
-        return StreamingResponse(
-            generate_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "*",
-            },
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error streaming research: {str(e)}"
-        )
+async def stream_research(data: ResumeInput, request: Request):
+    """Stream the final response from the response_generator node."""
+    return _stream_response(request.app.state.graph, data.thread_id, data.choice)
 
 
 @app.get("/stream")
-async def stream_research_get(thread_id: str, choice: str):
-    """Streams the research response from the response_generator node via GET for EventSource."""
-    config = {"configurable": {"thread_id": thread_id}}
-
-    try:
-        # Stream the research response using the graph's streaming capability
-        async def generate_stream():
-            async for chunk in stream_research_response(thread_id, choice):
-                yield f"data: {json.dumps(chunk)}\n\n"
-            # Send final done message
-            yield f"data: {json.dumps({'type': 'done', 'content': '', 'done': True})}\n\n"
-
-        return StreamingResponse(
-            generate_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "*",
-            },
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error streaming research: {str(e)}"
-        )
+async def stream_research_get(thread_id: str, choice: str, request: Request):
+    """Stream the final response via GET (for EventSource)."""
+    return _stream_response(request.app.state.graph, thread_id, choice)
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))

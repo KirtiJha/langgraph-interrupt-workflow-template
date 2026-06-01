@@ -77,8 +77,12 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv-verify/
 env/
 venv/
+
+# Local persistent data (durable checkpoints, etc.)
+data/
 ENV/
 env.bak/
 venv.bak/

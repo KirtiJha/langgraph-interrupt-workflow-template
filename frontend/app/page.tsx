@@ -65,6 +65,9 @@ const STEP_ICONS = {
   completed: CheckCircle,
 };
 
+// Backend API base URL — override with NEXT_PUBLIC_API_URL at build/run time.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -134,7 +137,7 @@ export default function ChatInterface() {
     addMessage("user", message);
 
     try {
-      const response = await fetch("http://localhost:8000/start", {
+      const response = await fetch(`${API_URL}/start`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -208,7 +211,7 @@ export default function ChatInterface() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/resume", {
+      const response = await fetch(`${API_URL}/resume`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -282,7 +285,7 @@ export default function ChatInterface() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/continue", {
+      const response = await fetch(`${API_URL}/continue`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -365,7 +368,7 @@ export default function ChatInterface() {
     try {
       // Create EventSource for streaming
       const eventSource = new EventSource(
-        `http://localhost:8000/stream?thread_id=${threadId}&choice=${encodeURIComponent(
+        `${API_URL}/stream?thread_id=${threadId}&choice=${encodeURIComponent(
           choice
         )}`
       );
