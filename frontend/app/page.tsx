@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import {
   Send,
@@ -595,14 +596,22 @@ export default function ChatInterface() {
               Intelligent research with interactive guidance
             </p>
           </div>
-          {threadId && (
-            <div className="ml-auto flex items-center space-x-2 bg-green-50 px-3 py-1.5 rounded-full border border-green-200">
-              <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
-              <span className="text-xs font-medium text-green-700">
-                Active Session
-              </span>
-            </div>
-          )}
+          <div className="ml-auto flex items-center space-x-3">
+            {threadId && (
+              <div className="flex items-center space-x-2 bg-green-50 px-3 py-1.5 rounded-full border border-green-200">
+                <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
+                <span className="text-xs font-medium text-green-700">
+                  Active Session
+                </span>
+              </div>
+            )}
+            <Link
+              href="/approval"
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-full px-3 py-1.5 transition-colors"
+            >
+              Approval workflow →
+            </Link>
+          </div>
         </div>
       </div>
 

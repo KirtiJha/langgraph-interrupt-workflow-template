@@ -12,18 +12,23 @@
 
 > **Runs with zero configuration.** Clone it and go — a built-in mock model lets you explore the full interrupt flow without any API keys. Add a provider when you're ready.
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/KirtiJha/langgraph-interrupt-workflow-template)
+
+> One click → a ready-to-run dev container with Python, Node, and all dependencies installed.
+
 ---
 
 ## ✨ Why this template?
 
-Most "agent" demos run start-to-finish with no human control. Real-world systems — approvals, content review, high-stakes tool calls — need a human in the loop. This template shows **two complementary ways** to do that with the latest LangGraph:
+Most "agent" demos run start-to-finish with no human control. Real-world systems — approvals, content review, high-stakes tool calls — need a human in the loop. This template shows **three complementary ways** to do that with the latest LangGraph:
 
 | Pattern | File | Best for |
 |---------|------|----------|
-| 🛠️ **Custom interrupt graph** | `backend/graph.py` | Multi-step workflows with several explicit decision points (approve plan → pick direction → choose format). |
+| 🛠️ **Custom multi-step interrupt graph** | `backend/graph.py` | Workflows with several explicit decision points (approve plan → pick direction → choose format). |
+| ✅ **Approve / edit / reject workflow** | `backend/approval_workflow.py` | Draft-then-review flows: the AI drafts, a human approves, edits, or rejects with feedback (redrafts on reject). |
 | 🤖 **Prebuilt agent + HITL middleware** | `backend/agent.py` | Tool-using agents where you want approval *only* before sensitive actions, with minimal code (`create_agent` + `HumanInTheLoopMiddleware`). |
 
-Both use the same primitive: `interrupt()` pauses the graph, **persists state**, and waits for `Command(resume=...)`.
+All three use the same primitive: `interrupt()` pauses the graph, **persists state**, and waits for `Command(resume=...)`.
 
 ## 🚀 Features
 
@@ -118,24 +123,40 @@ Try it from the CLI:
 cd backend && python agent.py "What are the latest advances in solid-state batteries?"
 ```
 
+### Approve / edit / reject workflow
+
+A second example (`backend/approval_workflow.py`, UI at **`/approval`**) shows the
+three canonical human actions on a single interrupt:
+
+- **Approve** → send the draft as-is
+- **Edit** → send the human's revised version
+- **Reject + feedback** → the AI redrafts using the feedback, then pauses again
+
+```python
+response = interrupt({"type": "approval", "draft": draft, "actions": ["approve", "edit", "reject"]})
+# resume with: Command(resume={"action": "reject", "feedback": "Make it shorter"})
+```
+
 ## 🔭 Visualize with LangGraph Studio
 
 ```bash
 pip install "langgraph-cli[inmem]"
-langgraph dev          # opens LangGraph Studio with the `research` and `agent` graphs
+langgraph dev          # opens LangGraph Studio with the research, approval, and agent graphs
 ```
 
-`langgraph.json` registers both graphs so you can step through interrupts visually.
+`langgraph.json` registers all three graphs so you can step through interrupts visually.
 
 ## 📡 API reference
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/start` | POST | Start a new conversation thread |
+| `/start` | POST | Start a new research conversation thread |
 | `/resume` | POST | Resume an interrupted workflow with a choice |
 | `/continue` | POST | Ask a follow-up on an existing thread (keeps memory) |
 | `/stream` | GET/POST | Stream the final response (SSE) |
 | `/get_state/{thread_id}` | GET | Inspect current workflow state |
+| `/approval/start` | POST | Draft content for a task and pause for review |
+| `/approval/decide` | POST | Resume with `approve` / `edit` / `reject` |
 | `/health` | GET | Liveness probe |
 
 ## ⚙️ Configuration
@@ -187,21 +208,24 @@ USE_MOCK_LLM=true pytest -v     # fast, offline, no API keys
 ```
 langgraph-interrupt-workflow-template/
 ├── backend/
-│   ├── main.py            # FastAPI app (lifespan-managed graph, SSE streaming)
-│   ├── graph.py           # Human-in-the-loop research workflow
-│   ├── agent.py           # create_agent + HumanInTheLoopMiddleware example
-│   ├── llm.py             # Provider-agnostic LLM factory + offline mock model
-│   ├── tools.py           # Example web_search tool (Tavily / mock)
-│   ├── test_main.py       # Pytest suite
+│   ├── main.py                # FastAPI app (lifespan-managed graphs, SSE streaming)
+│   ├── graph.py               # Multi-step human-in-the-loop research workflow
+│   ├── approval_workflow.py   # Approve / edit / reject workflow
+│   ├── agent.py               # create_agent + HumanInTheLoopMiddleware example
+│   ├── llm.py                 # Provider-agnostic LLM factory + offline mock model
+│   ├── tools.py               # Example web_search tool (Tavily / mock)
+│   ├── test_main.py           # Pytest suite
 │   ├── requirements.txt
 │   └── .env.example
-├── frontend/              # Next.js 15 + React 19 chat UI
-│   ├── app/page.tsx
+├── frontend/                  # Next.js 15 + React 19 UI
+│   ├── app/page.tsx           # Research assistant chat
+│   ├── app/approval/page.tsx  # Approve / edit / reject UI
 │   └── Dockerfile
-├── langgraph.json         # LangGraph Studio config (research + agent graphs)
+├── .devcontainer/             # GitHub Codespaces / VS Code dev container
+├── langgraph.json             # LangGraph Studio config (research + approval + agent)
 ├── .github/workflows/ci.yml
-├── Dockerfile             # Backend image
-├── docker-compose.yml     # Backend + frontend services
+├── Dockerfile                 # Backend image
+├── docker-compose.yml         # Backend + frontend services
 └── README.md
 ```
 

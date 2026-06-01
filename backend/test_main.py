@@ -62,5 +62,54 @@ def test_cancel_short_circuits(client):
     assert resume.status_code == 200
 
 
+# --- Approval workflow ------------------------------------------------------
+def test_approval_start_drafts_and_pauses(client):
+    start = client.post("/approval/start", json={"task": "Write a welcome email"})
+    assert start.status_code == 200
+    data = start.json()
+    assert data["thread_id"]
+    assert data["requires_input"] is True
+    assert data["draft"]
+    assert data["status"] == "awaiting_review"
+
+
+def test_approval_approve_sends(client):
+    thread_id = client.post("/approval/start", json={"task": "Write a note"}).json()["thread_id"]
+    decide = client.post(
+        "/approval/decide", json={"thread_id": thread_id, "action": "approve"}
+    )
+    assert decide.status_code == 200
+    data = decide.json()
+    assert data["requires_input"] is False
+    assert data["status"] == "sent"
+    assert data["final_output"]
+
+
+def test_approval_edit_uses_user_content(client):
+    thread_id = client.post("/approval/start", json={"task": "Write a note"}).json()["thread_id"]
+    edited = "This is my hand-edited final version."
+    decide = client.post(
+        "/approval/decide",
+        json={"thread_id": thread_id, "action": "edit", "content": edited},
+    )
+    assert decide.status_code == 200
+    data = decide.json()
+    assert data["status"] == "sent"
+    assert data["final_output"] == edited
+
+
+def test_approval_reject_redrafts_and_pauses_again(client):
+    thread_id = client.post("/approval/start", json={"task": "Write a note"}).json()["thread_id"]
+    decide = client.post(
+        "/approval/decide",
+        json={"thread_id": thread_id, "action": "reject", "feedback": "Make it shorter"},
+    )
+    assert decide.status_code == 200
+    data = decide.json()
+    # After a reject, a new draft is produced and we pause for review again.
+    assert data["requires_input"] is True
+    assert data["revision_count"] == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
