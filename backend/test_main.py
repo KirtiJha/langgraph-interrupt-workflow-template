@@ -1,96 +1,66 @@
+"""Tests for the LangGraph interrupt workflow API.
+
+Run with: USE_MOCK_LLM=true python -m pytest -v
+The mock model keeps these tests fast and offline (no API keys required).
 """
-Basic tests for the LangGraph interrupt functionality.
-Run with: python -m pytest
-"""
+
+import os
 
 import pytest
 from fastapi.testclient import TestClient
-import sys
-import os
 
-# Add the backend directory to the path
-sys.path.insert(0, os.path.dirname(__file__))
+os.environ.setdefault("USE_MOCK_LLM", "true")
 
 from main import app
 
-client = TestClient(app)
+
+@pytest.fixture()
+def client():
+    # `with` triggers the FastAPI lifespan so app.state.graph is built.
+    with TestClient(app) as test_client:
+        yield test_client
 
 
-def test_root_endpoint():
-    """Test that the API is running."""
-    # Since we don't have a root endpoint, test the docs
-    response = client.get("/docs")
+def test_health(client):
+    response = client.get("/health")
     assert response.status_code == 200
+    assert response.json()["status"] == "ok"
 
 
-def test_start_chat_endpoint():
-    """Test starting a new chat conversation."""
-    test_message = "What is quantum computing?"
-
-    response = client.post("/start", json={"message": test_message})
-
-    # Should return successfully
+def test_start_chat_creates_thread_and_interrupts(client):
+    response = client.post("/start", json={"message": "What is quantum computing?"})
     assert response.status_code == 200
-
     data = response.json()
-
-    # Should have required fields
-    assert "thread_id" in data
-    assert "state" in data
-    assert "requires_input" in data
-
-    # Thread ID should be a string
-    assert isinstance(data["thread_id"], str)
-    assert len(data["thread_id"]) > 0
+    assert isinstance(data["thread_id"], str) and data["thread_id"]
+    assert data["requires_input"] is True
+    assert data["interrupt_message"]
 
 
-def test_get_state_invalid_thread():
-    """Test getting state for invalid thread ID."""
+def test_get_state_invalid_thread(client):
     response = client.get("/get_state/invalid-thread-id")
     assert response.status_code == 404
 
 
-def test_resume_invalid_thread():
-    """Test resuming with invalid thread ID."""
-    response = client.post(
-        "/resume", json={"thread_id": "invalid-thread-id", "choice": "proceed"}
-    )
-    assert response.status_code == 500  # Should handle gracefully
+def test_full_interrupt_flow_completes(client):
+    start = client.post("/start", json={"message": "Explain interrupts"})
+    thread_id = start.json()["thread_id"]
+
+    # Resume through each interrupt until the workflow completes.
+    for choice in ["proceed", "technical", "executive"]:
+        resume = client.post("/resume", json={"thread_id": thread_id, "choice": choice})
+        assert resume.status_code == 200
+
+    final = client.get(f"/get_state/{thread_id}").json()
+    assert final["requires_input"] is False
+    assert final["state"]["final_response"]
 
 
-def test_conversation_history_invalid_thread():
-    """Test getting conversation history for invalid thread."""
-    response = client.get("/conversation_history/invalid-thread-id")
-    assert response.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_interrupt_flow():
-    """Test the complete interrupt flow."""
-    # Start a conversation
-    start_response = client.post(
-        "/start", json={"message": "Test query for interrupts"}
-    )
-
-    assert start_response.status_code == 200
-    start_data = start_response.json()
-    thread_id = start_data["thread_id"]
-
-    # Should have an interrupt waiting
-    assert start_data["requires_input"] is True
-    assert "interrupt_message" in start_data
-
-    # Get current state
-    state_response = client.get(f"/get_state/{thread_id}")
-    assert state_response.status_code == 200
-
-    # Resume with a choice
-    resume_response = client.post(
-        "/resume", json={"thread_id": thread_id, "choice": "proceed"}
-    )
-
-    assert resume_response.status_code == 200
+def test_cancel_short_circuits(client):
+    start = client.post("/start", json={"message": "anything"})
+    thread_id = start.json()["thread_id"]
+    resume = client.post("/resume", json={"thread_id": thread_id, "choice": "cancel"})
+    assert resume.status_code == 200
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    pytest.main([__file__, "-v"])

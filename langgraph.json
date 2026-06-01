@@ -1,0 +1,9 @@
+{
+  "dependencies": ["./backend"],
+  "graphs": {
+    "research": "./backend/graph.py:build_research_graph",
+    "agent": "./backend/agent.py:build_agent"
+  },
+  "env": "./backend/.env",
+  "python_version": "3.11"
+}

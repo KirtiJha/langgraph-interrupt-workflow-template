@@ -1,374 +1,220 @@
-# LangGraph Interrupt Workflow Template
+# 🧩 LangGraph Interrupt Workflow Template
 
-[![LangGraph](https://img.shields.io/badge/LangGraph-Human--in--the--Loop-blue)](https://langchain-ai.github.io/langgraph/)
+[![CI](https://github.com/KirtiJha/langgraph-interrupt-workflow-template/actions/workflows/ci.yml/badge.svg)](https://github.com/KirtiJha/langgraph-interrupt-workflow-template/actions/workflows/ci.yml)
+[![LangGraph](https://img.shields.io/badge/LangGraph-v1-1C3C3C?logo=langchain&logoColor=white)](https://docs.langchain.com/oss/python/langgraph/overview)
+[![LangChain](https://img.shields.io/badge/LangChain-v1-1C3C3C?logo=langchain&logoColor=white)](https://docs.langchain.com/oss/python/langchain/overview)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Next.js](https://img.shields.io/badge/Next.js%2015-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-⚡ **Production-ready LangGraph interrupt template** with modern web interface for building human-in-the-loop AI workflows. This starter kit provides everything you need to create interactive AI applications that can pause execution, request user input, and resume processing based on user decisions.
+⚡ A **production-ready, provider-agnostic template** for building **human-in-the-loop AI workflows** with **LangGraph v1**. Pause an agent mid-execution, ask a human to approve / edit / redirect, then resume exactly where it left off — with a polished Next.js chat UI on top.
 
-## 🎯 Quick Start
+> **Runs with zero configuration.** Clone it and go — a built-in mock model lets you explore the full interrupt flow without any API keys. Add a provider when you're ready.
 
-This template includes a **research assistant example** to demonstrate the interrupt patterns. You can easily replace this with your own use case while keeping the robust interrupt infrastructure.
+---
 
-1. **Clone the template**
-2. **Set up your environment** (Watson API keys or swap to your preferred LLM)
-3. **Run the example** to see interrupts in action
-4. **Customize** the workflow for your specific needs
+## ✨ Why this template?
 
-Perfect for building: Content review systems, data processing pipelines, quality control workflows, configuration wizards, and any AI application requiring human oversight.
+Most "agent" demos run start-to-finish with no human control. Real-world systems — approvals, content review, high-stakes tool calls — need a human in the loop. This template shows **two complementary ways** to do that with the latest LangGraph:
+
+| Pattern | File | Best for |
+|---------|------|----------|
+| 🛠️ **Custom interrupt graph** | `backend/graph.py` | Multi-step workflows with several explicit decision points (approve plan → pick direction → choose format). |
+| 🤖 **Prebuilt agent + HITL middleware** | `backend/agent.py` | Tool-using agents where you want approval *only* before sensitive actions, with minimal code (`create_agent` + `HumanInTheLoopMiddleware`). |
+
+Both use the same primitive: `interrupt()` pauses the graph, **persists state**, and waits for `Command(resume=...)`.
 
 ## 🚀 Features
 
-### 🎯 **Template/Starter Kit**
-- **Ready-to-use**: Clone and customize for your specific use case
-- **Production-ready**: Includes testing, Docker, and deployment configurations
-- **Well-documented**: Comprehensive guides and examples
-- **Modular design**: Easy to extend and modify
-
-### Core LangGraph Interrupt Capabilities
-- **Dynamic Interrupts**: Pause graph execution at any node for user input
-- **State Preservation**: Maintain conversation and workflow state across interrupts
-- **Resume Functionality**: Continue execution with user-provided choices
-- **Multiple Interrupt Types**: Support different types of user interactions
-- **Flexible Options**: Both predefined choices and free-text input support
-
-### Technical Implementation
-- **Backend**: FastAPI with LangGraph state management
-- **Frontend**: Next.js with real-time UI updates
-- **LLM Integration**: IBM Watson ChatWatsonx (easily swappable)
-- **State Management**: Persistent conversation threading
-- **Interactive UI**: Modern glassmorphism design with animations
+- **🧩 Human-in-the-loop, done right** — multiple interrupt points, resume with approve/edit/redirect.
+- **🔌 Provider-agnostic** — OpenAI, Anthropic, Google, Groq, Mistral, IBM watsonx, Ollama… via LangChain's `init_chat_model`. One env var to switch.
+- **🆓 Zero-config demo** — a streaming-capable mock model runs the whole app with **no API keys**.
+- **💾 Durable execution** — optional `AsyncSqliteSaver` checkpointer; workflows survive server restarts.
+- **🤖 Latest agent stack** — LangGraph **v1.2** + LangChain **v1**, `create_agent`, and `HumanInTheLoopMiddleware`.
+- **📡 Token streaming** — Server-Sent Events stream the final answer to the UI.
+- **🔭 LangGraph Studio ready** — `langgraph.json` lets you visualize & debug both graphs with `langgraph dev`.
+- **🎨 Modern UI** — Next.js 15 + React 19 chat interface with live progress.
+- **✅ Tested & CI'd** — pytest suite + GitHub Actions for backend and frontend.
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Frontend      │    │   Backend       │    │   LangGraph     │
-│   (Next.js)     │◄──►│   (FastAPI)     │◄──►│   Workflow      │
-│                 │    │                 │    │                 │
-│ • Chat Interface│    │ • State Mgmt    │    │ • Node Execution│
-│ • Interrupt UI  │    │ • API Endpoints │    │ • Interrupts    │
-│ • Progress Bar  │    │ • Threading     │    │ • State Flow    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+┌──────────────────┐     HTTP / SSE      ┌──────────────────┐         ┌────────────────────┐
+│   Frontend       │ ──────────────────► │   Backend        │ ──────► │   LangGraph        │
+│   Next.js 15     │ ◄────────────────── │   FastAPI        │ ◄────── │   workflow         │
+│ • Chat UI        │                     │ • /start /resume │         │ • interrupt()      │
+│ • Interrupt cards│                     │ • /stream (SSE)  │         │ • checkpointer     │
+│ • Live progress  │                     │ • lifespan graph │         │ • resume via Command│
+└──────────────────┘                     └──────────────────┘         └────────────────────┘
 ```
 
-## 📋 Prerequisites
+## ⚡ Quick Start (zero config)
 
-- **Python 3.11+** (for backend)
-- **Node.js 18+** (for frontend)
-- **IBM Watson Account** (or modify for other LLM providers)
-
-## 🛠️ Installation
-
-### 1. Clone the Repository
 ```bash
-git clone https://github.com/yourusername/langgraph-interrupt-workflow-template.git
-cd langgraph-interrupt-workflow-template
-```
-
-### 2. Backend Setup
-```bash
+# 1. Backend
 cd backend
-
-# Create virtual environment
-python -m venv langgraph-interrupt
-source langgraph-interrupt/bin/activate  # On Windows: langgraph-interrupt\Scripts\activate
-
-# Upgrade pip
-pip install --upgrade pip
-
-# Install dependencies
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+cp .env.example .env            # works as-is with the built-in mock model
+python main.py                  # http://localhost:8000  (docs at /docs)
 
-# For development (optional)
-pip install -r requirements-dev.txt
-
-# Create environment file
-cp .env.example .env
-# Edit .env with your credentials (see Configuration section)
-```
-
-### 3. Frontend Setup
-```bash
+# 2. Frontend (new terminal)
 cd frontend
-
-# Install dependencies
 npm install
-
-# Or with yarn
-yarn install
+npm run dev                     # http://localhost:3000
 ```
 
-## ⚙️ Configuration
+Open http://localhost:3000, ask a question, and watch the workflow pause for your input at each interrupt.
 
-Create a `.env` file in the `backend/` directory:
+### Use a real LLM
+
+Edit `backend/.env` and set a model + matching API key:
 
 ```env
-# IBM Watson Configuration
-WATSONX_URL=https://us-south.ml.cloud.ibm.com
-WATSONX_API_KEY=your_watson_api_key_here
-WATSONX_PROJECT_ID=your_project_id_here
-
-# LangChain Tracing (Optional)
-LANGCHAIN_API_KEY=your_langchain_api_key
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
-LANGCHAIN_PROJECT=your_project_name
+LLM_MODEL=gpt-4o-mini
+OPENAI_API_KEY=sk-...
+# or: LLM_MODEL=claude-sonnet-4-5  LLM_PROVIDER=anthropic  ANTHROPIC_API_KEY=...
 ```
 
-### Environment Variables Explained
+That's it — the workflow and agent automatically use it.
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `WATSONX_URL` | Watson ML service endpoint | Yes |
-| `WATSONX_API_KEY` | Your IBM Watson API key | Yes |
-| `WATSONX_PROJECT_ID` | Watson project identifier | Yes |
-| `LANGCHAIN_*` | LangChain tracing config | No |
-
-## 🚀 Running the Application
-
-### Option 1: Local Development
-
-#### Start Backend Server
-```bash
-cd backend
-source langgraph-interrupt/bin/activate
-python main.py
-# Server runs on http://localhost:8000
-```
-
-#### Start Frontend Server
-```bash
-cd frontend
-npm run dev
-# Frontend runs on http://localhost:3000
-```
-
-### Option 2: Docker (Recommended for Production)
-
-```bash
-# Copy environment file
-cp backend/.env.example backend/.env
-# Edit backend/.env with your credentials
-
-# Build and run with Docker Compose
-docker-compose up --build
-
-# Access the application at http://localhost:8000
-```
-
-## 📖 Understanding LangGraph Interrupts
-
-### How Interrupts Work
-
-1. **Node Execution**: Graph executes nodes sequentially
-2. **Interrupt Trigger**: Node calls `interrupt()` function
-3. **State Pause**: Execution stops, state is preserved
-4. **User Interaction**: Frontend displays options to user
-5. **Resume**: User choice sent back via `Command(resume=choice)`
-6. **Continue**: Graph resumes with user input
-
-### Code Example
+## 🧠 How interrupts work
 
 ```python
-from langgraph.types import interrupt
+from langgraph.types import interrupt, Command
 
-def interactive_node(state: State) -> Dict[str, Any]:
-    # Process current state
-    analysis = analyze_data(state["input"])
-    
-    # Interrupt for user decision
-    user_choice = interrupt({
-        "message": "How should I proceed?",
-        "options": ["option1", "option2", "option3"],
-        "context": analysis
-    })
-    
-    # Continue based on user choice
-    return {
-        "user_decision": user_choice,
-        "next_step": determine_next_step(user_choice)
-    }
+async def format_selection_interrupt(state):
+    # Pause and ask the human. State is persisted automatically.
+    choice = interrupt("How should I format the final answer?")
+    return {"format_choice": choice}
+
+# Later, from your API:
+await graph.ainvoke(Command(resume="executive"), config)   # resumes exactly here
 ```
 
-### API Endpoints
+1. A node calls `interrupt(payload)` → execution pauses, state is checkpointed.
+2. The API returns the interrupt payload to the UI (`requires_input: true`).
+3. The user picks an option; the API calls `ainvoke(Command(resume=choice))`.
+4. The graph continues from the interrupted node with the user's input.
+
+### The modern agent pattern (HITL middleware)
+
+```python
+from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware
+
+agent = create_agent(
+    model,
+    tools=[web_search],
+    middleware=[HumanInTheLoopMiddleware(interrupt_on={"web_search": True})],
+    checkpointer=checkpointer,
+)
+```
+
+Try it from the CLI:
+
+```bash
+cd backend && python agent.py "What are the latest advances in solid-state batteries?"
+```
+
+## 🔭 Visualize with LangGraph Studio
+
+```bash
+pip install "langgraph-cli[inmem]"
+langgraph dev          # opens LangGraph Studio with the `research` and `agent` graphs
+```
+
+`langgraph.json` registers both graphs so you can step through interrupts visually.
+
+## 📡 API reference
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/start` | POST | Initialize new conversation thread |
-| `/resume` | POST | Resume interrupted workflow |
-| `/get_state/{thread_id}` | GET | Get current workflow state |
+| `/start` | POST | Start a new conversation thread |
+| `/resume` | POST | Resume an interrupted workflow with a choice |
+| `/continue` | POST | Ask a follow-up on an existing thread (keeps memory) |
+| `/stream` | GET/POST | Stream the final response (SSE) |
+| `/get_state/{thread_id}` | GET | Inspect current workflow state |
+| `/health` | GET | Liveness probe |
 
-## 🎨 Customization
+## ⚙️ Configuration
 
-### Adding New Interrupt Types
+All configuration is via environment variables (see [`backend/.env.example`](backend/.env.example)).
 
-1. **Create Node Function**:
-```python
-def custom_interrupt_node(state: YourState) -> Dict[str, Any]:
-    result = interrupt("Your custom message here")
-    return {"custom_field": result}
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LLM_MODEL` | Model id (e.g. `gpt-4o-mini`) | mock model |
+| `LLM_PROVIDER` | Provider override (`openai`, `anthropic`, `ibm`, …) | inferred |
+| `LLM_TEMPERATURE` | Sampling temperature | `0.7` |
+| `USE_MOCK_LLM` | Force the offline mock model | `false` |
+| `TAVILY_API_KEY` | Enables live web search in `tools.py` | – |
+| `CHECKPOINT_DB` | Path to enable durable SQLite persistence | in-memory |
+| `CORS_ORIGINS` | Comma-separated allowed origins | `*` |
+| `PORT` | Backend port | `8000` |
+
+## 🐳 Docker
+
+```bash
+cp backend/.env.example backend/.env   # configure as needed
+docker compose up --build
+# Frontend → http://localhost:3000   Backend → http://localhost:8000
 ```
 
-2. **Add to Graph**:
-```python
-graph_builder.add_node("custom_node", custom_interrupt_node)
-graph_builder.add_edge("previous_node", "custom_node")
-```
+Compose runs the backend (with a durable SQLite checkpoint volume) and the Next.js frontend as separate services.
 
-3. **Update Frontend** (optional):
-```typescript
-// Handle custom interrupt types in your UI
-if (interruptType === "custom") {
-    // Custom UI logic
-}
-```
+## 🎨 Customizing for your use case
 
-### Swapping LLM Providers
+This template ships a **research assistant** example to demonstrate the patterns. To adapt it:
 
-Replace the Watson LLM in `backend/graph.py`:
+1. **Define your state** in `backend/graph.py` (`ResearchState`).
+2. **Add nodes**, calling `interrupt(...)` wherever you need a human decision.
+3. **Wire edges** in `build_research_graph()`.
+4. **Add tools** in `backend/tools.py` and expose them to the agent.
+5. **Swap the LLM** by changing env vars — no code changes needed.
 
-```python
-# Instead of ChatWatsonx
-from langchain_openai import ChatOpenAI
-# or
-from langchain_anthropic import ChatAnthropic
-
-def get_llm():
-    return ChatOpenAI(model="gpt-4")  # or your preferred model
-```
+Great fits: content review & approval, data-processing pipelines, quality control, configuration wizards, customer-support escalation, and any workflow needing human oversight.
 
 ## 🧪 Testing
 
-### Backend Tests
 ```bash
 cd backend
-source langgraph-interrupt/bin/activate
-python -m pytest test_main.py -v
+USE_MOCK_LLM=true pytest -v     # fast, offline, no API keys
 ```
 
-### Frontend Tests (Future)
-```bash
-cd frontend
-npm test
-```
-
-### End-to-End Testing
-1. Start both backend and frontend
-2. Navigate to http://localhost:3000
-3. Test the complete interrupt flow:
-   - Start a conversation
-   - Verify interrupt appears
-   - Select options and resume
-   - Check final response
-
-## 🧪 Example Use Cases
-
-This interrupt framework can be adapted for various scenarios:
-
-- **Content Review**: Pause for human approval before publishing
-- **Data Processing**: User selection of processing methods
-- **Workflow Routing**: Dynamic path selection based on user input
-- **Quality Control**: Human verification at critical steps
-- **Configuration**: Runtime parameter adjustment
-- **Error Handling**: User decision on error recovery
-
-## 📁 Project Structure
+## 📁 Project structure
 
 ```
 langgraph-interrupt-workflow-template/
 ├── backend/
-│   ├── main.py              # FastAPI application
-│   ├── graph.py             # LangGraph workflow definition
-│   ├── requirements.txt     # Python dependencies
-│   ├── requirements-dev.txt # Development dependencies
-│   ├── test_main.py         # Basic tests
-│   ├── .env.example         # Environment template
-│   └── .env                 # Environment variables (create from example)
-├── frontend/
-│   ├── app/
-│   │   ├── page.tsx         # Main chat interface
-│   │   ├── layout.tsx       # App layout
-│   │   └── globals.css      # Global styles
-│   ├── package.json         # Node.js dependencies
-│   └── tailwind.config.js   # Tailwind configuration
-├── .github/
-│   └── ISSUE_TEMPLATE/      # GitHub issue templates
-│       ├── bug_report.md
-│       └── feature_request.md
-├── .gitignore              # Git ignore rules
-├── CHANGELOG.md            # Version history
-├── CONTRIBUTING.md         # Contribution guidelines
-├── Dockerfile              # Docker configuration
-├── docker-compose.yml      # Docker Compose setup
-├── LICENSE                 # MIT License
-├── README.md               # This file
-└── SECURITY.md             # Security policy
+│   ├── main.py            # FastAPI app (lifespan-managed graph, SSE streaming)
+│   ├── graph.py           # Human-in-the-loop research workflow
+│   ├── agent.py           # create_agent + HumanInTheLoopMiddleware example
+│   ├── llm.py             # Provider-agnostic LLM factory + offline mock model
+│   ├── tools.py           # Example web_search tool (Tavily / mock)
+│   ├── test_main.py       # Pytest suite
+│   ├── requirements.txt
+│   └── .env.example
+├── frontend/              # Next.js 15 + React 19 chat UI
+│   ├── app/page.tsx
+│   └── Dockerfile
+├── langgraph.json         # LangGraph Studio config (research + agent graphs)
+├── .github/workflows/ci.yml
+├── Dockerfile             # Backend image
+├── docker-compose.yml     # Backend + frontend services
+└── README.md
 ```
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md). Fork → branch → PR.
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🆘 Troubleshooting
-
-### Common Issues
-
-**Backend Issues:**
-- **Import errors**: Ensure virtual environment is activated
-- **Watson authentication**: Verify API keys in `.env`
-- **Port conflicts**: Change port in `main.py` if needed
-
-**Frontend Issues:**
-- **Build errors**: Clear `.next` folder and rebuild
-- **API connection**: Verify backend is running on correct port
-- **Styling issues**: Check Tailwind CSS configuration
-
-**LangGraph Issues:**
-- **State persistence**: Ensure checkpointer is properly configured
-- **Interrupt not working**: Verify `interrupt()` function usage
-- **Threading errors**: Check thread_id consistency
-
-### Debug Mode
-
-Enable debug logging in `backend/main.py`:
-
-```python
-import logging
-logging.basicConfig(level=logging.DEBUG)
-```
+MIT — see [LICENSE](LICENSE).
 
 ## 🔗 Resources
 
-- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [Next.js Documentation](https://nextjs.org/docs)
-- [IBM Watson Documentation](https://cloud.ibm.com/docs/watson)
-
-## 💡 Next Steps
-
-### 🎨 **Customization Ideas**
-- [ ] Add more interrupt types (file upload, drawing, etc.)
-- [ ] Integrate different LLM providers (OpenAI, Anthropic, etc.)
-- [ ] Implement webhook support for external interrupts
-- [ ] Add workflow visualization components
-- [ ] Create interrupt analytics and monitoring
-- [ ] Build domain-specific interrupt patterns
-
-### 🚀 **Template Usage**
-- [ ] Replace the research assistant example with your use case
-- [ ] Customize the interrupt types for your domain
-- [ ] Update the UI to match your brand/requirements
-- [ ] Add authentication/authorization if needed
-- [ ] Deploy to your preferred cloud platform
+- [LangGraph docs](https://docs.langchain.com/oss/python/langgraph/overview) · [What's new in v1](https://docs.langchain.com/oss/python/releases/langgraph-v1)
+- [Human-in-the-loop guide](https://docs.langchain.com/oss/python/langchain/human-in-the-loop)
+- [`create_agent`](https://docs.langchain.com/oss/python/langchain/agents) · [FastAPI](https://fastapi.tiangolo.com/) · [Next.js](https://nextjs.org/docs)

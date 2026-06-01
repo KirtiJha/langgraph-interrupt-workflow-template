@@ -5,40 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-06-01
+
+Major modernization to the LangGraph **v1** / LangChain **v1** agent stack.
 
 ### Added
-- Production-ready LangGraph interrupt workflow template
-- FastAPI backend with comprehensive state management
-- Next.js frontend with interactive UI components
-- Real-time progress tracking and visualization
-- Multiple interrupt pattern examples
-- IBM Watson LLM integration (easily swappable)
-- Modern glassmorphism design system
-- Comprehensive documentation and setup guides
-- Docker containerization and deployment configs
-
-### Template Features
-- Ready-to-customize workflow examples
-- Modular interrupt system design
-- Production deployment configurations
-- Development and testing infrastructure
+- **Provider-agnostic LLM layer** (`backend/llm.py`) via LangChain `init_chat_model` —
+  OpenAI, Anthropic, Google, Groq, Mistral, IBM watsonx, Ollama, and more.
+- **Zero-config offline mode**: a streaming-capable `MockChatModel` runs the full
+  app (including SSE streaming) with no API keys.
+- **Modern agent example** (`backend/agent.py`) using `create_agent` +
+  `HumanInTheLoopMiddleware` (replaces deprecated `create_react_agent`).
+- **Durable execution**: optional `AsyncSqliteSaver` checkpointer via `CHECKPOINT_DB`,
+  wired through a FastAPI lifespan.
+- **Example `web_search` tool** (`backend/tools.py`) with Tavily support and an
+  offline fallback.
+- **LangGraph Studio support** via `langgraph.json` (`research` + `agent` graphs).
+- **GitHub Actions CI** for backend (pytest, Python 3.11/3.12) and frontend build.
+- `/health` endpoint and configurable `CORS_ORIGINS`, `PORT`, `LOG_LEVEL`.
+- Configurable frontend API base URL via `NEXT_PUBLIC_API_URL`.
 
 ### Changed
-- N/A (initial release)
-
-### Deprecated
-- N/A (initial release)
+- Upgraded **LangGraph 0.2 → 1.2**, **LangChain 0.2 → 1.x**, FastAPI, Pydantic, uvicorn.
+- Upgraded frontend to **Next.js 15** + **React 19**.
+- `graph.py` refactored to a `build_research_graph(checkpointer)` factory and async
+  state APIs; replaced `print` debugging with structured logging.
+- Docker split into separate backend and frontend images; `docker-compose` now runs
+  both services with a durable checkpoint volume.
+- Rewrote README and `.env.example` around the provider-agnostic, zero-config workflow.
 
 ### Removed
-- N/A (initial release)
-
-### Fixed
-- N/A (initial release)
+- Dead/duplicate frontend files (`page_backup.tsx`, `page_fixed.tsx`).
+- Hardcoded IBM-Watson-only configuration as the sole option.
 
 ### Security
-- Environment variables properly secured
-- API keys excluded from version control
+- **Removed a hardcoded LangSmith API key** that was committed in `backend/main.py`.
+  Configure all secrets via environment variables. (Rotate any previously exposed key.)
 
 ## [1.0.0] - 2025-06-13
 
