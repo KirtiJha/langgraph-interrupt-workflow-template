@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Parallel research with the `Send` API** (map-reduce): a planner decomposes
+  the question and fans out concurrent sub-researchers via
+  `Command(goto=[Send(...)])`, aggregated through a reset-aware reducer. Live
+  progress streams to the UI via `get_stream_writer` / `stream_mode="custom"`.
+- **Cross-thread long-term memory** (`backend/memory.py`) backed by a LangGraph
+  `Store`: the assistant remembers a user's topics/preferences across sessions
+  (new `user_id` field on `/start` and `/continue`).
+- **Time travel** — `/history/{thread_id}` lists checkpoints and `/fork` rewinds
+  to a past interrupt and resumes down a different path, preserving the original
+  run. A "History / Rewind" panel in the UI drives it.
+- Unified streaming resume: `/stream` now emits progress, tokens, and a closing
+  state event for every step (one SSE path in the frontend).
 - **Approve / edit / reject workflow** (`backend/approval_workflow.py`): the AI
   drafts content, a human approves it, edits it, or rejects with feedback to
   trigger a redraft (capped by `MAX_REVISIONS`). New `/approval/start` and
