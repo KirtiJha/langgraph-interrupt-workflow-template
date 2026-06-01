@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Approve / edit / reject workflow** (`backend/approval_workflow.py`): the AI
+  drafts content, a human approves it, edits it, or rejects with feedback to
+  trigger a redraft (capped by `MAX_REVISIONS`). New `/approval/start` and
+  `/approval/decide` endpoints and tests.
+- **Approval UI** at `/approval` (`frontend/app/approval/page.tsx`) with inline
+  Approve / Edit / Reject actions, plus a header link from the research assistant.
+- **GitHub Codespaces / dev container** (`.devcontainer/devcontainer.json`) and an
+  "Open in Codespaces" badge — one-click, fully provisioned environment.
+- Registered the `approval` graph in `langgraph.json` for LangGraph Studio.
+
 ## [2.0.0] - 2026-06-01
 
 Major modernization to the LangGraph **v1** / LangChain **v1** agent stack.
