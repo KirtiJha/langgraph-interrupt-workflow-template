@@ -13,18 +13,35 @@ configuration via a built-in mock model.
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Dict, List, Optional, TypedDict
+from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.types import Command, interrupt
+from langgraph.types import Command, Send, interrupt
 
 from llm import get_llm
+from memory import get_active_store, load_user_memory, save_user_memory
 from tools import web_search
 
 logger = logging.getLogger(__name__)
+
+# How many parallel sub-questions to research for each approach.
+SUBQUERY_COUNT = {"simplified": 2, "focused": 2, "continue_context": 3, "proceed": 4}
+
+
+def reset_or_append(existing: List[str], new: List[str]) -> List[str]:
+    """Reducer: an empty write resets the list; otherwise append.
+
+    This lets parallel sub-researchers accumulate findings within a single run
+    (each appends its result) while a follow-up question can start clean by
+    writing ``[]``.
+    """
+    if not new:
+        return []
+    return (existing or []) + new
 
 
 class ResearchState(TypedDict):
@@ -33,7 +50,10 @@ class ResearchState(TypedDict):
     messages: Annotated[List[AnyMessage], add_messages]
     user_query: str
     research_plan: str
-    research_results: List[str]
+    # Reducer so parallel sub-researchers (fanned out via Send) can append
+    # findings concurrently; a follow-up question resets it by writing [].
+    research_results: Annotated[List[str], reset_or_append]
+    sub_queries: List[str]
     analysis: str
     final_response: str
     current_step: str
@@ -42,6 +62,19 @@ class ResearchState(TypedDict):
     user_choice: Optional[str]
     format_choice: Optional[str]
     research_direction: Optional[str]
+    # Cross-thread long-term memory (loaded from / saved to the Store).
+    user_id: Optional[str]
+    user_memory: Optional[str]
+
+
+class SubResearchState(TypedDict):
+    """Input state for a single parallel sub-researcher (via Send)."""
+
+    user_query: str
+    sub_query: str
+    sub_index: int
+    sub_total: int
+    user_choice: str
 
 
 def _previous_exchange(messages: List[AnyMessage]) -> tuple[str, str]:
@@ -100,83 +133,133 @@ How would you like me to approach this research?
     }
 
 
-# --- Node 2: Information gathering ------------------------------------------
-async def information_gatherer(state: ResearchState) -> Dict[str, Any]:
-    """Gather information for the query, optionally using a web-search tool."""
-    logger.info("Gathering information")
-    user_choice = state.get("user_choice", "proceed")
+def _emit(payload: dict) -> None:
+    """Emit a custom progress event to any streaming consumer (no-op otherwise)."""
+    try:
+        get_stream_writer()(payload)
+    except Exception:  # pragma: no cover - not in a streaming context
+        pass
 
+
+# --- Memory: recall (start) -------------------------------------------------
+async def recall_memory(state: ResearchState) -> Dict[str, Any]:
+    """Load cross-thread memory for this user before planning."""
+    memory = await load_user_memory(get_active_store(), state.get("user_id"))
+    if memory:
+        logger.info("Recalled %d chars of long-term memory", len(memory))
+    return {"user_memory": memory}
+
+
+# --- Node 2a: Query planner (Send fan-out via Command) ----------------------
+async def query_planner(
+    state: ResearchState,
+) -> Command[Literal["sub_researcher", "handle_cancel"]]:
+    """Decompose the question and fan out parallel sub-researchers with ``Send``."""
+    user_choice = state.get("user_choice", "proceed")
     if user_choice == "cancel":
-        return {
-            "research_results": ["Research cancelled by user request"],
-            "current_step": "direct_response",
-            "final_response": "Research was cancelled at your request.",
-        }
+        return Command(goto="handle_cancel")
+
+    n = SUBQUERY_COUNT.get(user_choice, 4)
+    memory = state.get("user_memory") or ""
+    mem_section = f"\n\nWhat we already know about this user:\n{memory}" if memory else ""
 
     llm = get_llm()
-    messages = state.get("messages", [])
-    previous_query, previous_response = _previous_exchange(messages)
-    has_context = bool(previous_query and previous_response)
+    system = (
+        "You are a research planner. Break the user's question into "
+        f"{n} distinct, focused sub-questions that together cover it thoroughly. "
+        "Return each sub-question on its own line with no numbering."
+    )
+    response = await llm.ainvoke(
+        [
+            SystemMessage(content=system),
+            HumanMessage(content=f"Question: {state['user_query']}{mem_section}"),
+        ]
+    )
+    lines = [ln.strip(" -•\t") for ln in response.content.split("\n") if ln.strip()]
+    sub_queries = lines[:n] or [state["user_query"]]
+    while len(sub_queries) < min(n, 2):  # ensure at least a couple of workers
+        sub_queries.append(f"{state['user_query']} (aspect {len(sub_queries) + 1})")
 
-    context_section = ""
-    if has_context:
-        context_section = (
-            f"\n\nPrevious conversation context:\n"
-            f"- Previous question: {previous_query}\n"
-            f"- Previous response: {previous_response[:400]}...\n"
-            "Consider this context when generating findings."
-        )
+    _emit(
+        {
+            "type": "progress",
+            "phase": "planning",
+            "message": f"Planned {len(sub_queries)} parallel research threads",
+            "total": len(sub_queries),
+        }
+    )
 
-    if user_choice == "simplified":
-        system_prompt = (
-            "You are a research assistant providing a simplified analysis. "
-            "Generate 2-3 concise key findings." + context_section
+    sends = [
+        Send(
+            "sub_researcher",
+            {
+                "user_query": state["user_query"],
+                "sub_query": q,
+                "sub_index": i,
+                "sub_total": len(sub_queries),
+                "user_choice": user_choice,
+            },
         )
-    elif user_choice == "focused":
-        system_prompt = (
-            "You are a research assistant focusing on specific aspects. "
-            "Generate targeted findings on the most important aspects." + context_section
-        )
-    elif user_choice == "continue_context":
-        system_prompt = (
-            "You are a research assistant building on previous context. Provide "
-            "3-4 focused findings that connect to the prior discussion." + context_section
-        )
-    else:
-        system_prompt = (
-            "You are a thorough research assistant. Provide 4-5 detailed findings "
-            "covering multiple aspects of the question." + context_section
-        )
+        for i, q in enumerate(sub_queries)
+    ]
+    return Command(
+        goto=sends,
+        update={
+            "sub_queries": sub_queries,
+            "research_plan": f"Parallel research across {len(sub_queries)} sub-questions",
+            "current_step": "information_gathering",
+        },
+    )
 
-    # Optionally enrich with a live web search (mock results when offline).
+
+# --- Node 2b: Parallel sub-researcher (one per Send) ------------------------
+async def sub_researcher(state: SubResearchState) -> Dict[str, Any]:
+    """Research a single sub-question; results aggregate via the reducer."""
+    sub = state["sub_query"]
+    logger.info("Sub-researching: %s", sub)
+
     search_context = ""
     try:
-        search_context = web_search.invoke({"query": state["user_query"]})
-    except Exception as exc:  # pragma: no cover - tool is best-effort here
+        search_context = web_search.invoke({"query": sub})
+    except Exception as exc:  # pragma: no cover - best effort
         logger.warning("web_search failed: %s", exc)
 
-    research_query = (
-        f"Research query: {state['user_query']}\n"
-        f"Research approach: {user_choice}\n"
-        f"Reference material:\n{search_context}"
-    )
-
+    llm = get_llm()
     response = await llm.ainvoke(
-        [SystemMessage(content=system_prompt), HumanMessage(content=research_query)]
+        [
+            SystemMessage(
+                content=(
+                    "You are a focused researcher. Given a sub-question and reference "
+                    "material, produce one concise, substantive finding (2-3 sentences)."
+                )
+            ),
+            HumanMessage(content=f"Sub-question: {sub}\nReference:\n{search_context}"),
+        ]
     )
+    finding = f"[{sub}] {response.content.strip()}"
 
-    findings = [line.strip() for line in response.content.split("\n") if line.strip()][:5]
-    research_results = [f"Finding {i + 1}: {text}" for i, text in enumerate(findings)]
+    _emit(
+        {
+            "type": "progress",
+            "phase": "researching",
+            "message": f"Researched: {sub}",
+            "index": state.get("sub_index", 0) + 1,
+            "total": state.get("sub_total", 1),
+        }
+    )
+    return {"research_results": [finding]}
 
-    if has_context:
-        research_results.append(
-            f"Finding {len(research_results) + 1}: Context integration — connected to "
-            f"the earlier discussion about '{previous_query[:50]}...'"
-        )
 
+# --- Cancel branch ----------------------------------------------------------
+async def handle_cancel(state: ResearchState) -> Dict[str, Any]:
+    """Short-circuit when the user cancels at the planning interrupt."""
+    message = "Research was cancelled at your request."
     return {
-        "research_results": research_results,
-        "current_step": "research_direction_check",
+        "messages": [AIMessage(content=message)],
+        "research_results": ["Research cancelled by user request"],
+        "final_response": message,
+        "current_step": "completed",
+        "requires_user_input": False,
     }
 
 
@@ -320,6 +403,10 @@ async def response_generator(state: ResearchState) -> Dict[str, Any]:
             "Be accurate, actionable, and directly address the question."
         )
 
+    memory = state.get("user_memory") or ""
+    if memory:
+        system_prompt += f"\n\nRemembered context about this user:\n{memory}"
+
     context = (
         f"Original question: {state['user_query']}\n"
         f"Research findings: {'; '.join(state.get('research_results', []))}\n"
@@ -339,31 +426,51 @@ async def response_generator(state: ResearchState) -> Dict[str, Any]:
     }
 
 
-def build_research_graph(checkpointer: Any | None = None):
+# --- Memory: persist (end) --------------------------------------------------
+async def persist_memory(state: ResearchState) -> Dict[str, Any]:
+    """Save a memory note so future sessions remember this interaction."""
+    note = f"Asked about: {state.get('user_query', '')[:120]}"
+    if state.get("format_choice"):
+        note += f" (preferred format: {state['format_choice']})"
+    await save_user_memory(get_active_store(), state.get("user_id"), note)
+    return {}
+
+
+def build_research_graph(checkpointer: Any | None = None, store: Any | None = None):
     """Build and compile the research workflow.
 
     Args:
         checkpointer: A LangGraph checkpointer for durable, resumable state.
             When ``None`` (e.g. LangGraph Studio / langgraph dev), the runtime
             supplies its own persistence layer.
+        store: A LangGraph ``BaseStore`` for cross-thread long-term memory.
+            When ``None``, the memory nodes degrade to no-ops.
     """
     builder = StateGraph(ResearchState)
+    builder.add_node("recall_memory", recall_memory)
     builder.add_node("research_planner_interrupt", research_planner_interrupt)
-    builder.add_node("information_gatherer", information_gatherer)
+    builder.add_node("query_planner", query_planner)
+    builder.add_node("sub_researcher", sub_researcher)
+    builder.add_node("handle_cancel", handle_cancel)
     builder.add_node("research_direction_interrupt", research_direction_interrupt)
     builder.add_node("deep_analyzer", deep_analyzer)
     builder.add_node("format_selection_interrupt", format_selection_interrupt)
     builder.add_node("response_generator", response_generator)
+    builder.add_node("persist_memory", persist_memory)
 
-    builder.add_edge(START, "research_planner_interrupt")
-    builder.add_edge("research_planner_interrupt", "information_gatherer")
-    builder.add_edge("information_gatherer", "research_direction_interrupt")
+    builder.add_edge(START, "recall_memory")
+    builder.add_edge("recall_memory", "research_planner_interrupt")
+    builder.add_edge("research_planner_interrupt", "query_planner")
+    # query_planner fans out to parallel sub_researchers (or cancels) via Command.
+    builder.add_edge("sub_researcher", "research_direction_interrupt")
     builder.add_edge("research_direction_interrupt", "deep_analyzer")
     builder.add_edge("deep_analyzer", "format_selection_interrupt")
     builder.add_edge("format_selection_interrupt", "response_generator")
-    builder.add_edge("response_generator", END)
+    builder.add_edge("response_generator", "persist_memory")
+    builder.add_edge("persist_memory", END)
+    builder.add_edge("handle_cancel", END)
 
-    return builder.compile(checkpointer=checkpointer)
+    return builder.compile(checkpointer=checkpointer, store=store)
 
 
 # Module-level graph for `langgraph dev` / LangGraph Studio. The FastAPI app
@@ -371,48 +478,65 @@ def build_research_graph(checkpointer: Any | None = None):
 research_graph = build_research_graph(checkpointer=MemorySaver())
 
 
-# Nodes whose LLM output should be streamed to the client.
+# Nodes whose LLM output should be streamed to the client as the final answer.
 STREAMING_NODES = {"response_generator"}
 
 
-async def stream_research_response(graph, thread_id: str, user_choice: str):
-    """Resume the workflow and stream tokens from the final-response node."""
-    logger.info("Streaming research for thread=%s choice=%s", thread_id, user_choice)
-    config = {"configurable": {"thread_id": thread_id}}
+async def stream_research_response(
+    graph, thread_id: str, user_choice: str, config: Optional[dict] = None
+):
+    """Resume the workflow and stream everything the client needs.
 
-    format_choices = (
-        "comprehensive",
-        "executive",
-        "structured",
-        "conversational",
-        "bullet_points",
-    )
+    Emits, as the run progresses:
+    - ``progress`` events from the parallel sub-researchers (custom stream),
+    - ``content`` tokens from the final-response node (messages stream),
+    - a closing ``state`` event with the next interrupt / final answer.
+
+    ``config`` can point at a past ``checkpoint_id`` to resume from there
+    (time-travel / fork).
+    """
+    logger.info("Streaming research for thread=%s choice=%s", thread_id, user_choice)
+    config = config or {"configurable": {"thread_id": thread_id}}
 
     try:
-        if user_choice in format_choices:
-            current_state = await graph.aget_state(config)
-            if current_state.values:
-                await graph.aupdate_state(
-                    config,
-                    {"format_choice": user_choice, "user_choice": user_choice},
-                )
-
-        async for event in graph.astream_events(
-            Command(resume=user_choice), version="v2", config=config
+        interrupt_message = None
+        async for mode, data in graph.astream(
+            Command(resume=user_choice),
+            config=config,
+            stream_mode=["custom", "messages", "updates"],
         ):
-            if event["event"] == "on_chat_model_stream":
-                node = event.get("metadata", {}).get("langgraph_node")
-                if node in STREAMING_NODES:
-                    chunk = event["data"]["chunk"]
-                    if getattr(chunk, "content", None):
-                        yield {
-                            "content": chunk.content,
-                            "type": "content",
-                            "done": False,
-                            "node": node,
-                        }
+            if mode == "custom":
+                event = data if isinstance(data, dict) else {"message": str(data)}
+                event.setdefault("type", "progress")
+                yield event
+            elif mode == "messages":
+                chunk, meta = data
+                if meta.get("langgraph_node") in STREAMING_NODES and getattr(
+                    chunk, "content", None
+                ):
+                    yield {
+                        "type": "content",
+                        "content": chunk.content,
+                        "done": False,
+                        "node": meta.get("langgraph_node"),
+                    }
+            elif mode == "updates":
+                if isinstance(data, dict) and "__interrupt__" in data:
+                    interrupt_message = data["__interrupt__"][0].value
 
-        yield {"content": "", "type": "content", "done": True}
+        state = await graph.aget_state(config)
+        values = state.values or {}
+        yield {
+            "type": "state",
+            "requires_input": bool(state.next),
+            "interrupt_message": interrupt_message,
+            "current_step": values.get("current_step", "unknown"),
+            "final_response": values.get("final_response", ""),
+            "research_results": values.get("research_results", []),
+            "sub_queries": values.get("sub_queries", []),
+            "next": list(state.next),
+        }
+        yield {"type": "done", "content": "", "done": True}
     except Exception as exc:  # pragma: no cover - surfaced to the client
         logger.exception("Streaming error")
-        yield {"content": f"Error in streaming: {exc}", "type": "error", "done": True}
+        yield {"type": "error", "content": f"Error in streaming: {exc}", "done": True}

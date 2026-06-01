@@ -15,6 +15,8 @@ import {
   MessageSquare,
   Settings,
   AlertCircle,
+  History,
+  Clock,
 } from "lucide-react";
 
 interface Message {
@@ -79,6 +81,14 @@ export default function ChatInterface() {
   const [interruptData, setInterruptData] = useState<InterruptData | null>(
     null
   );
+  // Feature A: live progress from the parallel sub-researchers.
+  const [progress, setProgress] = useState<string[]>([]);
+  // Feature B: a stable id so the backend can remember this user across sessions.
+  const [userId, setUserId] = useState<string | null>(null);
+  // Feature C: time-travel checkpoints + the checkpoint we're forking from.
+  const [history, setHistory] = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [forkCheckpoint, setForkCheckpoint] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -88,6 +98,87 @@ export default function ChatInterface() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Persist a user id in localStorage to enable cross-session memory.
+  useEffect(() => {
+    let id = localStorage.getItem("lg_user_id");
+    if (!id) {
+      id = `user-${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem("lg_user_id", id);
+    }
+    setUserId(id);
+  }, []);
+
+  // Map a pending interrupt node / message to its choice options.
+  const optionsForInterrupt = (message: string): string[] => {
+    if (
+      message.includes("Research Direction") ||
+      message.includes("explore any specific angle")
+    ) {
+      return ["technical", "practical", "recent", "comparative", "continue"];
+    }
+    if (
+      message.includes("Choose Response Format") ||
+      message.includes("presentation style")
+    ) {
+      return [
+        "comprehensive",
+        "executive",
+        "structured",
+        "conversational",
+        "bullet_points",
+      ];
+    }
+    return ["proceed", "simplified", "focused", "cancel"];
+  };
+
+  const optionsForNode = (node: string): string[] => {
+    if (node === "research_direction_interrupt")
+      return ["technical", "practical", "recent", "comparative", "continue"];
+    if (node === "format_selection_interrupt")
+      return [
+        "comprehensive",
+        "executive",
+        "structured",
+        "conversational",
+        "bullet_points",
+      ];
+    return ["proceed", "simplified", "focused", "cancel"];
+  };
+
+  // Parse a fetch-based SSE stream and dispatch each JSON event.
+  const consumeStream = async (
+    path: string,
+    body: Record<string, unknown>,
+    onEvent: (data: any) => void
+  ) => {
+    const res = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.body) throw new Error("No response body");
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+      for (const part of parts) {
+        const line = part.trim();
+        if (line.startsWith("data: ")) {
+          try {
+            onEvent(JSON.parse(line.slice(6)));
+          } catch {
+            /* ignore keep-alives / partials */
+          }
+        }
+      }
+    }
+  };
 
   const addMessage = (
     role: "user" | "assistant" | "system" | "choice",
@@ -143,7 +234,7 @@ export default function ChatInterface() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, user_id: userId }),
       });
 
       if (!response.ok) {
@@ -156,32 +247,7 @@ export default function ChatInterface() {
       setCurrentStep(data.state.current_step);
 
       if (data.requires_input && data.interrupt_message) {
-        // Detect interrupt type and set appropriate options
-        let options = ["proceed", "simplified", "focused", "cancel"]; // default for research planning
-
-        if (
-          data.interrupt_message.includes("Research Direction") ||
-          data.interrupt_message.includes("explore any specific angle")
-        ) {
-          options = [
-            "technical",
-            "practical",
-            "recent",
-            "comparative",
-            "continue",
-          ];
-        } else if (
-          data.interrupt_message.includes("Choose Response Format") ||
-          data.interrupt_message.includes("presentation style")
-        ) {
-          options = [
-            "comprehensive",
-            "executive",
-            "structured",
-            "conversational",
-            "bullet_points",
-          ];
-        }
+        const options = optionsForInterrupt(data.interrupt_message);
 
         // Create interrupt data structure
         const interruptData = {
@@ -206,69 +272,64 @@ export default function ChatInterface() {
     }
   };
 
-  const resumeChat = async (choice: string, userInput?: string) => {
+  // Unified resume: streams progress (parallel research), tokens (final answer),
+  // and a closing state event. `fork` resumes from a past checkpoint (time travel).
+  const runResume = async (choice: string, fork?: string) => {
     if (!threadId) return;
 
     setIsLoading(true);
+    setInterruptData(null);
+    setProgress([]);
+
+    let assistantMessage = "";
+    let assistantAdded = false;
+
+    const path = fork ? "/fork" : "/stream";
+    const body = fork
+      ? { thread_id: threadId, checkpoint_id: fork, choice }
+      : { thread_id: threadId, choice };
 
     try {
-      const response = await fetch(`${API_URL}/resume`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          thread_id: threadId,
-          choice,
-          user_input: userInput || choice,
-        }),
-      });
-
-      const data = await response.json();
-      setChatState(data.state);
-      setCurrentStep(data.state.current_step);
-
-      if (data.requires_input && data.interrupt_message) {
-        // Detect interrupt type and set appropriate options
-        let options = ["proceed", "simplified", "focused", "cancel"]; // default for research planning
-
-        if (
-          data.interrupt_message.includes("Research Direction") ||
-          data.interrupt_message.includes("explore any specific angle")
-        ) {
-          options = [
-            "technical",
-            "practical",
-            "recent",
-            "comparative",
-            "continue",
-          ];
-        } else if (
-          data.interrupt_message.includes("Choose Response Format") ||
-          data.interrupt_message.includes("presentation style")
-        ) {
-          options = [
-            "comprehensive",
-            "executive",
-            "structured",
-            "conversational",
-            "bullet_points",
-          ];
+      await consumeStream(path, body, (data) => {
+        if (data.type === "progress") {
+          setIsLoading(false);
+          setProgress((prev) => [...prev, data.message || data.phase || "…"]);
+        } else if (data.type === "content" && !data.done) {
+          setIsLoading(false);
+          if (!assistantAdded) {
+            addMessage("assistant", "");
+            assistantAdded = true;
+          }
+          assistantMessage += data.content;
+          setMessages((prev) => {
+            const next = [...prev];
+            const last = next.length - 1;
+            if (last >= 0 && next[last].role === "assistant") {
+              next[last] = { ...next[last], content: assistantMessage };
+            }
+            return next;
+          });
+        } else if (data.type === "state") {
+          setProgress([]);
+          setCurrentStep(data.current_step || "idle");
+          setChatState((prev) => ({
+            ...(prev as ChatState),
+            current_step: data.current_step,
+            research_results: data.research_results || [],
+            final_response: data.final_response || "",
+          }));
+          if (data.requires_input && data.interrupt_message) {
+            setInterruptData({
+              type: "user_input",
+              message: data.interrupt_message,
+              question: data.interrupt_message,
+              options: optionsForInterrupt(data.interrupt_message),
+            });
+          } else if (data.final_response && !assistantAdded) {
+            addMessage("assistant", data.final_response);
+          }
         }
-
-        // Create interrupt data structure
-        const interruptData = {
-          type: "user_input",
-          message: data.interrupt_message,
-          question: data.interrupt_message,
-          options: options,
-        };
-        setInterruptData(interruptData);
-        // Don't add system message - only show the interrupt card
-      } else if (data.state.final_response) {
-        addMessage("assistant", data.state.final_response);
-        setInterruptData(null);
-      }
+      });
     } catch (error) {
       console.error("Error resuming chat:", error);
       addMessage(
@@ -278,6 +339,32 @@ export default function ChatInterface() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Feature C: load checkpoint history for the current thread.
+  const loadHistory = async () => {
+    if (!threadId) return;
+    try {
+      const res = await fetch(`${API_URL}/history/${threadId}`);
+      const data = await res.json();
+      setHistory(data.checkpoints || []);
+      setShowHistory(true);
+    } catch (error) {
+      console.error("Error loading history:", error);
+    }
+  };
+
+  // Feature C: rewind to a past interrupt and re-open its options to choose anew.
+  const rewindTo = (checkpoint: any) => {
+    const node = (checkpoint.next && checkpoint.next[0]) || "";
+    setForkCheckpoint(checkpoint.checkpoint_id);
+    setShowHistory(false);
+    setInterruptData({
+      type: "user_input",
+      message: `Rewound to an earlier step (${checkpoint.current_step || node}). Pick a different path to fork from here.`,
+      question: "Choose a different path",
+      options: optionsForNode(node),
+    });
   };
 
   const continueChat = async (message: string) => {
@@ -294,6 +381,7 @@ export default function ChatInterface() {
         body: JSON.stringify({
           thread_id: threadId,
           message: message,
+          user_id: userId,
         }),
       });
 
@@ -306,42 +394,12 @@ export default function ChatInterface() {
       setCurrentStep(data.state.current_step);
 
       if (data.requires_input && data.interrupt_message) {
-        // Detect interrupt type and set appropriate options
-        let options = ["proceed", "simplified", "focused", "cancel"]; // default for research planning
-
-        if (
-          data.interrupt_message.includes("Research Direction") ||
-          data.interrupt_message.includes("explore any specific angle")
-        ) {
-          options = [
-            "technical",
-            "practical",
-            "recent",
-            "comparative",
-            "continue",
-            "continue_context",
-          ];
-        } else if (
-          data.interrupt_message.includes("Choose Response Format") ||
-          data.interrupt_message.includes("presentation style")
-        ) {
-          options = [
-            "comprehensive",
-            "executive",
-            "structured",
-            "conversational",
-            "bullet_points",
-          ];
-        }
-
-        // Create interrupt data structure
-        const interruptData = {
+        setInterruptData({
           type: "user_input",
           message: data.interrupt_message,
           question: data.interrupt_message,
-          options: options,
-        };
-        setInterruptData(interruptData);
+          options: optionsForInterrupt(data.interrupt_message),
+        });
       } else if (data.state.final_response) {
         addMessage("assistant", data.state.final_response);
         setInterruptData(null);
@@ -357,88 +415,6 @@ export default function ChatInterface() {
     }
   };
 
-  // Streaming function using EventSource for Server-Sent Events
-  const streamResponse = async (choice: string, userInput?: string) => {
-    if (!threadId) return;
-
-    setIsLoading(true);
-    setInterruptData(null);
-
-    // Don't add user choice as a message here since we already added it as a choice message
-
-    try {
-      // Create EventSource for streaming
-      const eventSource = new EventSource(
-        `${API_URL}/stream?thread_id=${threadId}&choice=${encodeURIComponent(
-          choice
-        )}`
-      );
-
-      let assistantMessage = "";
-
-      // Add initial empty assistant message that we'll update
-      addMessage("assistant", "");
-
-      // Clear loading state once streaming starts
-      setIsLoading(false);
-
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-
-          // Clear loading state as soon as we start receiving data
-          if (data.type === "content" && !data.done) {
-            setIsLoading(false);
-
-            // Accumulate streaming content
-            assistantMessage += data.content;
-
-            // Update the last message (which should be the assistant message)
-            setMessages((prev) => {
-              const newMessages = [...prev];
-              const lastIndex = newMessages.length - 1;
-              if (
-                lastIndex >= 0 &&
-                newMessages[lastIndex].role === "assistant"
-              ) {
-                newMessages[lastIndex] = {
-                  ...newMessages[lastIndex],
-                  content: assistantMessage,
-                };
-              }
-              return newMessages;
-            });
-          } else if (data.done) {
-            // Streaming complete
-            eventSource.close();
-            setIsLoading(false);
-          }
-        } catch (error) {
-          console.error("Error parsing stream data:", error);
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        console.error("EventSource error:", error);
-        eventSource.close();
-        setIsLoading(false);
-        addMessage(
-          "system",
-          "Sorry, there was an error with the streaming response."
-        );
-      };
-
-      // Clean up on component unmount or when streaming completes
-      return () => {
-        eventSource.close();
-      };
-    } catch (error) {
-      console.error("Error starting stream:", error);
-      setIsLoading(false);
-      addMessage("system", "Sorry, there was an error starting the stream.");
-    }
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
@@ -448,7 +424,9 @@ export default function ChatInterface() {
     } else if (interruptData) {
       // If there's interrupt data, we're in the middle of a conversation flow
       addMessage("user", input);
-      resumeChat(input);
+      const fork = forkCheckpoint || undefined;
+      setForkCheckpoint(null);
+      runResume(input, fork);
     } else {
       // If there's no interrupt data but we have a threadId, this is a follow-up question
       addMessage("user", input);
@@ -471,26 +449,13 @@ export default function ChatInterface() {
       }
     }
 
-    // Check if this is likely the final response formatting choice
-    const formatChoices = [
-      "comprehensive",
-      "executive",
-      "structured",
-      "conversational",
-      "bullet_points",
-    ];
+    addChoiceMessage(option, choiceType);
 
-    if (formatChoices.includes(option)) {
-      // Add choice message instead of user message
-      addChoiceMessage(option, choiceType);
-      // Use streaming for the final response
-      streamResponse(option);
-    } else {
-      // Add choice message instead of user message
-      addChoiceMessage(option, choiceType);
-      // Use regular resume for other interrupt choices
-      resumeChat(option);
-    }
+    // A single streaming resume handles every step (progress + tokens). If we
+    // rewound via the history panel, fork from that checkpoint instead.
+    const fork = forkCheckpoint || undefined;
+    setForkCheckpoint(null);
+    runResume(option, fork);
 
     setInterruptData(null);
   };
@@ -604,6 +569,15 @@ export default function ChatInterface() {
                   Active Session
                 </span>
               </div>
+            )}
+            {threadId && (
+              <button
+                onClick={loadHistory}
+                title="Rewind to an earlier step (time travel)"
+                className="flex items-center gap-1 text-xs font-medium text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-full px-3 py-1.5 transition-colors"
+              >
+                <History className="w-3.5 h-3.5" /> History
+              </button>
             )}
             <Link
               href="/approval"
@@ -935,6 +909,75 @@ export default function ChatInterface() {
               </div>
             </div>
             {renderInterruptOptions()}
+          </div>
+        )}
+
+        {/* Feature A: live parallel-research progress (Send fan-out) */}
+        {progress.length > 0 && (
+          <div className="flex justify-start animate-fade-in">
+            <div className="bg-white/80 backdrop-blur-sm border border-blue-100 rounded-xl px-4 py-3 shadow-soft max-w-2xl w-full">
+              <div className="flex items-center gap-2 text-sm font-semibold text-blue-800 mb-2">
+                <Search className="w-4 h-4 animate-pulse" /> Researching in parallel
+              </div>
+              <ul className="space-y-1">
+                {progress.map((p, i) => (
+                  <li
+                    key={i}
+                    className="flex items-start gap-2 text-xs text-gray-600 animate-slide-up"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5 text-green-500 mt-0.5 shrink-0" />
+                    <span>{p}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {/* Feature C: time-travel / checkpoint history panel */}
+        {showHistory && (
+          <div className="flex justify-start animate-fade-in">
+            <div className="bg-white border border-amber-200 rounded-xl px-4 py-3 shadow-soft max-w-2xl w-full">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-sm font-semibold text-amber-800">
+                  <History className="w-4 h-4" /> Rewind to an earlier step
+                </div>
+                <button
+                  onClick={() => setShowHistory(false)}
+                  className="text-xs text-gray-400 hover:text-gray-700"
+                >
+                  Close
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mb-3">
+                Jump back to a previous interrupt and pick a different path — the
+                original run is preserved (LangGraph time travel).
+              </p>
+              <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                {history.filter((c) => c.has_interrupt).length === 0 && (
+                  <p className="text-xs text-gray-400">
+                    No earlier decision points yet.
+                  </p>
+                )}
+                {history
+                  .filter((c) => c.has_interrupt)
+                  .map((c) => (
+                    <button
+                      key={c.checkpoint_id}
+                      onClick={() => rewindTo(c)}
+                      className="w-full flex items-center justify-between gap-2 text-left bg-amber-50 hover:bg-amber-100 border border-amber-100 rounded-lg px-3 py-2 transition-colors"
+                    >
+                      <span className="flex items-center gap-2 text-xs text-gray-700">
+                        <Clock className="w-3.5 h-3.5 text-amber-600" />
+                        Step {c.step}: {(c.next && c.next[0]) || c.current_step}
+                      </span>
+                      <span className="text-[11px] font-medium text-amber-700">
+                        Rewind →
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </div>
           </div>
         )}
 

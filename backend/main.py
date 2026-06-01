@@ -27,6 +27,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
 from approval_workflow import build_approval_graph
@@ -39,20 +40,24 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Compile the graph with a durable checkpointer when configured."""
+    """Compile the graphs with a checkpointer (+ store for long-term memory)."""
+    # Cross-thread long-term memory. Swap for a Postgres-backed store in prod.
+    store = InMemoryStore()
+    app.state.store = store
+
     checkpoint_db = os.getenv("CHECKPOINT_DB")
     if checkpoint_db:
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
         logger.info("Using durable AsyncSqliteSaver at %s", checkpoint_db)
         async with AsyncSqliteSaver.from_conn_string(checkpoint_db) as saver:
-            app.state.graph = build_research_graph(checkpointer=saver)
+            app.state.graph = build_research_graph(checkpointer=saver, store=store)
             app.state.approval_graph = build_approval_graph(checkpointer=saver)
             yield
     else:
         logger.info("Using in-memory MemorySaver (set CHECKPOINT_DB for durability)")
         saver = MemorySaver()
-        app.state.graph = build_research_graph(checkpointer=saver)
+        app.state.graph = build_research_graph(checkpointer=saver, store=store)
         app.state.approval_graph = build_approval_graph(checkpointer=saver)
         yield
 
@@ -72,6 +77,7 @@ app.add_middleware(
 # --- Request models ---------------------------------------------------------
 class ChatInput(BaseModel):
     message: str
+    user_id: str | None = None  # enables cross-session long-term memory
 
 
 class ResumeInput(BaseModel):
@@ -83,6 +89,13 @@ class ResumeInput(BaseModel):
 class ContinueInput(BaseModel):
     thread_id: str
     message: str
+    user_id: str | None = None
+
+
+class ForkInput(BaseModel):
+    thread_id: str
+    checkpoint_id: str
+    choice: str  # the (possibly different) decision to apply at that checkpoint
 
 
 class ApprovalStart(BaseModel):
@@ -121,12 +134,15 @@ async def start_chat(chat_input: ChatInput, request: Request):
         "user_query": chat_input.message,
         "research_plan": "",
         "research_results": [],
+        "sub_queries": [],
         "analysis": "",
         "final_response": "",
         "current_step": "planning",
         "requires_user_input": False,
         "interrupt_data": None,
         "user_choice": None,
+        "user_id": chat_input.user_id,
+        "user_memory": None,
     }
 
     try:
@@ -201,16 +217,18 @@ async def continue_conversation(data: ContinueInput, request: Request):
             raise HTTPException(status_code=404, detail="Thread not found")
 
         follow_up_state = {
-            "messages": current_state.values.get("messages", []),
             "user_query": data.message,
             "research_plan": "",
-            "research_results": [],
+            "research_results": [],  # reset prior findings (reset_or_append reducer)
+            "sub_queries": [],
             "analysis": "",
             "final_response": "",
             "current_step": "planning",
             "requires_user_input": False,
             "interrupt_data": None,
             "user_choice": None,
+            "user_id": data.user_id or current_state.values.get("user_id"),
+            "user_memory": None,
         }
 
         result = await graph.ainvoke(follow_up_state, config)
@@ -294,9 +312,11 @@ async def approval_decide(data: ApprovalDecision, request: Request):
         raise HTTPException(status_code=500, detail=f"Error in approval decision: {exc}")
 
 
-def _stream_response(graph, thread_id: str, choice: str) -> StreamingResponse:
+def _stream_response(
+    graph, thread_id: str, choice: str, config: dict | None = None
+) -> StreamingResponse:
     async def generate_stream():
-        async for chunk in stream_research_response(graph, thread_id, choice):
+        async for chunk in stream_research_response(graph, thread_id, choice, config):
             yield f"data: {json.dumps(chunk)}\n\n"
         yield f"data: {json.dumps({'type': 'done', 'content': '', 'done': True})}\n\n"
 
@@ -309,14 +329,56 @@ def _stream_response(graph, thread_id: str, choice: str) -> StreamingResponse:
 
 @app.post("/stream")
 async def stream_research(data: ResumeInput, request: Request):
-    """Stream the final response from the response_generator node."""
+    """Resume and stream progress + the final response (SSE)."""
     return _stream_response(request.app.state.graph, data.thread_id, data.choice)
 
 
 @app.get("/stream")
 async def stream_research_get(thread_id: str, choice: str, request: Request):
-    """Stream the final response via GET (for EventSource)."""
+    """Resume and stream via GET (for EventSource)."""
     return _stream_response(request.app.state.graph, thread_id, choice)
+
+
+# --- Time travel (checkpoint history + fork) --------------------------------
+@app.get("/history/{thread_id}")
+async def get_history(thread_id: str, request: Request):
+    """List the checkpoints for a thread so a user can rewind / fork."""
+    graph = request.app.state.graph
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        checkpoints = []
+        async for snap in graph.aget_state_history(config):
+            nxt = list(snap.next)
+            checkpoints.append(
+                {
+                    "checkpoint_id": snap.config.get("configurable", {}).get("checkpoint_id"),
+                    "step": (snap.metadata or {}).get("step"),
+                    "next": nxt,
+                    "has_interrupt": bool(nxt),
+                    "current_step": (snap.values or {}).get("current_step"),
+                    "user_query": (snap.values or {}).get("user_query", ""),
+                    "created_at": str(snap.created_at) if snap.created_at else None,
+                }
+            )
+        return {"thread_id": thread_id, "checkpoints": checkpoints}
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Error reading history: {exc}")
+
+
+@app.post("/fork")
+async def fork_from_checkpoint(data: ForkInput, request: Request):
+    """Rewind to a past checkpoint and resume with a (possibly different) choice.
+
+    Streams the forked run just like ``/stream``. The new run branches off the
+    chosen checkpoint without losing the original history.
+    """
+    config = {
+        "configurable": {
+            "thread_id": data.thread_id,
+            "checkpoint_id": data.checkpoint_id,
+        }
+    }
+    return _stream_response(request.app.state.graph, data.thread_id, data.choice, config)
 
 
 if __name__ == "__main__":

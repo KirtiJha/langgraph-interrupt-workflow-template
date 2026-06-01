@@ -33,13 +33,16 @@ All three use the same primitive: `interrupt()` pauses the graph, **persists sta
 ## 🚀 Features
 
 - **🧩 Human-in-the-loop, done right** — multiple interrupt points, resume with approve/edit/redirect.
+- **🔀 Parallel research (`Send`)** — a planner fans out concurrent sub-researchers (map-reduce) via `Command(goto=[Send(...)])`, with **live progress streaming**.
+- **🧠 Long-term memory** — a LangGraph `Store` remembers a user's topics & preferences **across sessions**, not just within a thread.
+- **⏪ Time travel** — rewind to any past checkpoint and **fork** a different path; the original run is preserved.
 - **🔌 Provider-agnostic** — OpenAI, Anthropic, Google, Groq, Mistral, IBM watsonx, Ollama… via LangChain's `init_chat_model`. One env var to switch.
 - **🆓 Zero-config demo** — a streaming-capable mock model runs the whole app with **no API keys**.
 - **💾 Durable execution** — optional `AsyncSqliteSaver` checkpointer; workflows survive server restarts.
 - **🤖 Latest agent stack** — LangGraph **v1.2** + LangChain **v1**, `create_agent`, and `HumanInTheLoopMiddleware`.
-- **📡 Token streaming** — Server-Sent Events stream the final answer to the UI.
-- **🔭 LangGraph Studio ready** — `langgraph.json` lets you visualize & debug both graphs with `langgraph dev`.
-- **🎨 Modern UI** — Next.js 15 + React 19 chat interface with live progress.
+- **📡 Streaming** — Server-Sent Events stream progress *and* the final answer to the UI.
+- **🔭 LangGraph Studio ready** — `langgraph.json` registers all graphs for `langgraph dev`.
+- **🎨 Modern UI** — Next.js 15 + React 19 chat interface with live progress and a rewind panel.
 - **✅ Tested & CI'd** — pytest suite + GitHub Actions for backend and frontend.
 
 ## 🏗️ Architecture
@@ -137,6 +140,42 @@ response = interrupt({"type": "approval", "draft": draft, "actions": ["approve",
 # resume with: Command(resume={"action": "reject", "feedback": "Make it shorter"})
 ```
 
+## 🧪 Advanced LangGraph features
+
+The research workflow is also a tour of LangGraph's more powerful primitives:
+
+**Parallel research with `Send` (map-reduce).** A planner node splits the
+question into sub-questions and fans them out to concurrent workers, combining
+`Command` (state update + dynamic routing) with `Send` (one task per item):
+
+```python
+return Command(
+    goto=[Send("sub_researcher", {"sub_query": q}) for q in sub_queries],
+    update={"sub_queries": sub_queries},
+)
+```
+
+Each worker streams a progress event (`get_stream_writer`) so the UI shows
+*"Researched: …"* live; results aggregate through a reset-aware reducer.
+
+**Cross-thread long-term memory (`Store`).** Pass a `user_id` and the assistant
+remembers across sessions — a brand-new thread recalls prior topics/preferences:
+
+```python
+graph = build_research_graph(checkpointer=saver, store=InMemoryStore())
+# in a node:  await store.aput(("memories", user_id), key, {"text": note})
+```
+
+**Time travel (rewind & fork).** List checkpoints and resume from any past one
+down a different path — without losing the original run:
+
+```python
+async for snap in graph.aget_state_history(config): ...   # GET /history/{thread_id}
+# resume from a past checkpoint -> POST /fork
+graph.astream(Command(resume=new_choice),
+              config={"configurable": {"thread_id": tid, "checkpoint_id": cid}})
+```
+
 ## 🔭 Visualize with LangGraph Studio
 
 ```bash
@@ -150,10 +189,12 @@ langgraph dev          # opens LangGraph Studio with the research, approval, and
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/start` | POST | Start a new research conversation thread |
+| `/start` | POST | Start a research thread (`user_id` enables memory) |
 | `/resume` | POST | Resume an interrupted workflow with a choice |
+| `/stream` | GET/POST | Resume and stream progress + the final answer (SSE) |
 | `/continue` | POST | Ask a follow-up on an existing thread (keeps memory) |
-| `/stream` | GET/POST | Stream the final response (SSE) |
+| `/history/{thread_id}` | GET | List checkpoints for time travel |
+| `/fork` | POST | Rewind to a checkpoint and resume a different path |
 | `/get_state/{thread_id}` | GET | Inspect current workflow state |
 | `/approval/start` | POST | Draft content for a task and pause for review |
 | `/approval/decide` | POST | Resume with `approve` / `edit` / `reject` |
@@ -212,6 +253,7 @@ langgraph-interrupt-workflow-template/
 │   ├── graph.py               # Multi-step human-in-the-loop research workflow
 │   ├── approval_workflow.py   # Approve / edit / reject workflow
 │   ├── agent.py               # create_agent + HumanInTheLoopMiddleware example
+│   ├── memory.py              # Cross-thread long-term memory (Store)
 │   ├── llm.py                 # Provider-agnostic LLM factory + offline mock model
 │   ├── tools.py               # Example web_search tool (Tavily / mock)
 │   ├── test_main.py           # Pytest suite
