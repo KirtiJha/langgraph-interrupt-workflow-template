@@ -156,6 +156,48 @@ def test_approval_edit_uses_user_content(client):
     assert data["final_output"] == edited
 
 
+# --- Agent engine (create_agent + HITL middleware) --------------------------
+def test_agent_start_pauses_for_tool_approval(client):
+    events = _sse(client, "POST", "/agent/start", json={"message": "research fuel cells"})
+    assert any(e["type"] == "thread" for e in events)
+    state = next(e for e in events if e["type"] == "state")
+    assert state["requires_input"] is True
+    assert state["tool_requests"][0]["name"] == "web_search"
+    assert "approve" in state["allowed"] and "edit" in state["allowed"]
+
+
+def test_agent_approve_completes(client):
+    events = _sse(client, "POST", "/agent/start", json={"message": "research wind"})
+    thread_id = next(e["thread_id"] for e in events if e["type"] == "thread")
+    resumed = _sse(
+        client,
+        "POST",
+        "/agent/decide",
+        json={"thread_id": thread_id, "decisions": [{"type": "approve"}]},
+    )
+    state = next(e for e in resumed if e["type"] == "state")
+    assert state["requires_input"] is False
+    assert state["final_response"]
+
+
+def test_agent_edit_tool_args(client):
+    events = _sse(client, "POST", "/agent/start", json={"message": "research solar"})
+    thread_id = next(e["thread_id"] for e in events if e["type"] == "thread")
+    resumed = _sse(
+        client,
+        "POST",
+        "/agent/decide",
+        json={
+            "thread_id": thread_id,
+            "decisions": [
+                {"type": "edit", "edited_action": {"name": "web_search", "args": {"query": "edited"}}}
+            ],
+        },
+    )
+    state = next(e for e in resumed if e["type"] == "state")
+    assert state["requires_input"] is False
+
+
 def test_approval_reject_redrafts_and_pauses_again(client):
     thread_id = client.post("/approval/start", json={"task": "Write a note"}).json()["thread_id"]
     decide = client.post(

@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Second backend engine: an agentic research assistant** (`backend/agent.py`)
+  built with `create_agent` + `HumanInTheLoopMiddleware`, selectable via a live
+  **Workflow ↔ Agent toggle** in the UI. The model drives the loop and pauses
+  for **approve / edit / reject / respond** before running a tool. Shares the
+  same provider-agnostic LLM, `web_search` tool, and `Store` memory. New
+  `/agent/start` and `/agent/decide` SSE endpoints.
+- The offline mock model now drives a tool-calling loop, so the agent engine —
+  including human-in-the-loop tool approval — works with **zero configuration**.
 - **Parallel research with the `Send` API** (map-reduce): a planner decomposes
   the question and fans out concurrent sub-researchers via
   `Command(goto=[Send(...)])`, aggregated through a reset-aware reducer. Live

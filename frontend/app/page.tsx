@@ -89,6 +89,13 @@ export default function ChatInterface() {
   const [history, setHistory] = useState<any[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [forkCheckpoint, setForkCheckpoint] = useState<string | null>(null);
+  // Which backend engine drives the conversation.
+  const [engine, setEngine] = useState<"workflow" | "agent">("workflow");
+  // Agent tool-approval editor state (lifted out of the card component).
+  const [agentEditing, setAgentEditing] = useState(false);
+  const [agentRejecting, setAgentRejecting] = useState(false);
+  const [agentArgsText, setAgentArgsText] = useState("");
+  const [agentFeedback, setAgentFeedback] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -367,6 +374,101 @@ export default function ChatInterface() {
     });
   };
 
+  // ── Agent engine (create_agent + HITL middleware) ──────────────────────────
+  // Shared SSE handler for both /agent/start and /agent/decide.
+  const consumeAgentStream = async (
+    path: string,
+    body: Record<string, unknown>
+  ) => {
+    setIsLoading(true);
+    setInterruptData(null);
+    setProgress([]);
+    let assistantMessage = "";
+    let assistantAdded = false;
+
+    try {
+      await consumeStream(path, body, (data) => {
+        if (data.type === "thread") {
+          setThreadId(data.thread_id);
+        } else if (data.type === "progress") {
+          setIsLoading(false);
+          setProgress((prev) => [...prev, data.message || "Working…"]);
+        } else if (data.type === "content" && !data.done) {
+          setIsLoading(false);
+          if (!assistantAdded) {
+            addMessage("assistant", "");
+            assistantAdded = true;
+          }
+          assistantMessage += data.content;
+          setMessages((prev) => {
+            const next = [...prev];
+            const last = next.length - 1;
+            if (last >= 0 && next[last].role === "assistant") {
+              next[last] = { ...next[last], content: assistantMessage };
+            }
+            return next;
+          });
+        } else if (data.type === "state") {
+          setProgress([]);
+          setCurrentStep(data.current_step || "agent");
+          if (data.requires_input && data.tool_requests?.length) {
+            // Reset the approval editor for the new tool request.
+            setAgentEditing(false);
+            setAgentRejecting(false);
+            setAgentFeedback("");
+            setAgentArgsText(
+              JSON.stringify(data.tool_requests[0]?.args ?? {}, null, 2)
+            );
+            setInterruptData({
+              type: "agent_tool_approval",
+              message: "The agent wants to run a tool",
+              question: "Approve, edit, or reject the tool call",
+              options: [],
+              agent: {
+                toolRequests: data.tool_requests,
+                allowed: data.allowed || ["approve", "reject"],
+              },
+            });
+          } else if (data.final_response && !assistantAdded) {
+            addMessage("assistant", data.final_response);
+          }
+        }
+      });
+    } catch (error) {
+      console.error("Agent error:", error);
+      addMessage("system", "Sorry, the agent hit an error. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const startAgent = async (message: string, threadOverride?: string) => {
+    await consumeAgentStream("/agent/start", {
+      message,
+      user_id: userId,
+      thread_id: threadOverride,
+    });
+  };
+
+  const agentDecide = async (decisions: Record<string, unknown>[]) => {
+    if (!threadId) return;
+    await consumeAgentStream("/agent/decide", { thread_id: threadId, decisions });
+  };
+
+  // Switch engines: reset the conversation so each engine starts clean.
+  const switchEngine = (next: "workflow" | "agent") => {
+    if (next === engine) return;
+    setEngine(next);
+    setThreadId(null);
+    setMessages([]);
+    setInterruptData(null);
+    setProgress([]);
+    setChatState(null);
+    setCurrentStep("idle");
+    setForkCheckpoint(null);
+    setShowHistory(false);
+  };
+
   const continueChat = async (message: string) => {
     if (!threadId) return;
 
@@ -419,16 +521,27 @@ export default function ChatInterface() {
     e.preventDefault();
     if (!input.trim()) return;
 
+    // Agent engine: a tool approval is handled with buttons, not free text.
+    if (engine === "agent" && interruptData?.agent) {
+      return;
+    }
+
+    if (engine === "agent") {
+      addMessage("user", input);
+      startAgent(input, threadId || undefined); // new thread, or follow-up turn
+      setInput("");
+      return;
+    }
+
+    // Workflow engine
     if (!threadId) {
       startChat(input);
     } else if (interruptData) {
-      // If there's interrupt data, we're in the middle of a conversation flow
       addMessage("user", input);
       const fork = forkCheckpoint || undefined;
       setForkCheckpoint(null);
       runResume(input, fork);
     } else {
-      // If there's no interrupt data but we have a threadId, this is a follow-up question
       addMessage("user", input);
       continueChat(input);
     }
@@ -458,6 +571,137 @@ export default function ChatInterface() {
     runResume(option, fork);
 
     setInterruptData(null);
+  };
+
+  // Agent engine: approve / edit / reject a pending tool call.
+  // State lives in the parent so it survives re-renders during streaming.
+  const renderAgentApproval = () => {
+    const req = interruptData?.agent?.toolRequests?.[0];
+    const allowed: string[] = interruptData?.agent?.allowed || [];
+    if (!req) return null;
+
+    const submitEdit = () => {
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(agentArgsText);
+      } catch {
+        parsed = req.args;
+      }
+      addMessage("choice", `Edited & approved ${req.name}`, "agent");
+      agentDecide([
+        { type: "edit", edited_action: { name: req.name, args: parsed } },
+      ]);
+    };
+
+    return (
+      <div className="interrupt-card animate-slide-up border-purple-200 from-purple-50 to-indigo-50">
+        <div className="flex items-center space-x-2 mb-3">
+          <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center">
+            <Settings className="w-4 h-4 text-white" />
+          </div>
+          <h3 className="font-semibold text-purple-900 text-sm">
+            Tool approval required
+          </h3>
+        </div>
+        <p className="text-sm text-purple-900 mb-2">
+          The agent wants to call{" "}
+          <code className="bg-purple-100 px-1.5 py-0.5 rounded text-purple-800">
+            {req.name}
+          </code>
+          :
+        </p>
+
+        {agentEditing ? (
+          <textarea
+            value={agentArgsText}
+            onChange={(e) => setAgentArgsText(e.target.value)}
+            rows={4}
+            className="w-full font-mono text-xs rounded-lg border border-purple-200 px-3 py-2 mb-2 focus:outline-none focus:ring-2 focus:ring-purple-300"
+          />
+        ) : (
+          <pre className="bg-white/70 border border-purple-100 rounded-lg p-3 text-xs text-gray-700 overflow-x-auto mb-2">
+            {JSON.stringify(req.args, null, 2)}
+          </pre>
+        )}
+
+        {agentRejecting && (
+          <textarea
+            value={agentFeedback}
+            onChange={(e) => setAgentFeedback(e.target.value)}
+            rows={2}
+            placeholder="Why are you rejecting? (sent back to the agent)"
+            className="w-full text-xs rounded-lg border border-rose-200 px-3 py-2 mb-2 focus:outline-none focus:ring-2 focus:ring-rose-300"
+          />
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          {agentEditing ? (
+            <>
+              <button
+                onClick={submitEdit}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1.5 text-sm font-medium"
+              >
+                Run with edits
+              </button>
+              <button
+                onClick={() => setAgentEditing(false)}
+                className="text-sm text-gray-500 hover:text-gray-800 px-2"
+              >
+                Cancel
+              </button>
+            </>
+          ) : agentRejecting ? (
+            <>
+              <button
+                onClick={() => {
+                  addMessage("choice", `Rejected ${req.name}`, "agent");
+                  agentDecide([{ type: "reject", message: agentFeedback }]);
+                }}
+                className="bg-rose-600 hover:bg-rose-700 text-white rounded-lg px-3 py-1.5 text-sm font-medium"
+              >
+                Reject tool call
+              </button>
+              <button
+                onClick={() => setAgentRejecting(false)}
+                className="text-sm text-gray-500 hover:text-gray-800 px-2"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              {allowed.includes("approve") && (
+                <button
+                  onClick={() => {
+                    addMessage("choice", `Approved ${req.name}`, "agent");
+                    agentDecide([{ type: "approve" }]);
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-1.5 text-sm font-medium"
+                >
+                  ✓ Approve
+                </button>
+              )}
+              {allowed.includes("edit") && (
+                <button
+                  onClick={() => setAgentEditing(true)}
+                  className="bg-white border border-purple-200 hover:bg-purple-50 text-purple-800 rounded-lg px-4 py-1.5 text-sm font-medium"
+                >
+                  ✎ Edit
+                </button>
+              )}
+              {allowed.includes("reject") && (
+                <button
+                  onClick={() => setAgentRejecting(true)}
+                  className="bg-white border border-rose-200 hover:bg-rose-50 text-rose-700 rounded-lg px-4 py-1.5 text-sm font-medium"
+                >
+                  ✕ Reject
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const renderInterruptOptions = () => {
@@ -562,15 +806,40 @@ export default function ChatInterface() {
             </p>
           </div>
           <div className="ml-auto flex items-center space-x-3">
+            {/* Engine toggle: deterministic workflow vs. agentic loop */}
+            <div className="flex items-center bg-gray-100 rounded-full p-0.5 border border-gray-200">
+              <button
+                onClick={() => switchEngine("workflow")}
+                className={`text-xs font-medium px-3 py-1 rounded-full transition-colors ${
+                  engine === "workflow"
+                    ? "bg-white text-indigo-700 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+                title="Deterministic StateGraph with fixed interrupts + parallel Send"
+              >
+                Workflow
+              </button>
+              <button
+                onClick={() => switchEngine("agent")}
+                className={`text-xs font-medium px-3 py-1 rounded-full transition-colors ${
+                  engine === "agent"
+                    ? "bg-white text-purple-700 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+                title="Model-driven create_agent + human-in-the-loop tool approval"
+              >
+                Agent
+              </button>
+            </div>
             {threadId && (
-              <div className="flex items-center space-x-2 bg-green-50 px-3 py-1.5 rounded-full border border-green-200">
+              <div className="hidden sm:flex items-center space-x-2 bg-green-50 px-3 py-1.5 rounded-full border border-green-200">
                 <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
                 <span className="text-xs font-medium text-green-700">
                   Active Session
                 </span>
               </div>
             )}
-            {threadId && (
+            {threadId && engine === "workflow" && (
               <button
                 onClick={loadHistory}
                 title="Rewind to an earlier step (time travel)"
@@ -605,9 +874,9 @@ export default function ChatInterface() {
               Welcome to AI Research Assistant
             </h2>
             <p className="text-gray-600 max-w-xl mx-auto text-sm leading-relaxed">
-              Ask me anything and I'll conduct thorough research with
-              interactive guidance to provide you with comprehensive,
-              well-analyzed answers.
+              {engine === "agent"
+                ? "Agent engine: a model-driven create_agent loop. It decides when to search and pauses for your approval before running a tool (approve / edit / reject)."
+                : "Workflow engine: a deterministic graph with fixed interrupt points and parallel Send research. Switch to Agent in the header to compare paradigms."}
             </p>
             <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-3 max-w-3xl mx-auto">
               <div className="p-4 bg-white/60 backdrop-blur-sm rounded-xl border border-white/40 shadow-soft">
@@ -844,7 +1113,7 @@ export default function ChatInterface() {
         ))}
 
         {/* Interrupt Options */}
-        {interruptData && (
+        {interruptData && !interruptData.agent && (
           <div className="interrupt-card animate-slide-up">
             <div className="flex items-center space-x-2 mb-3">
               <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
@@ -911,6 +1180,9 @@ export default function ChatInterface() {
             {renderInterruptOptions()}
           </div>
         )}
+
+        {/* Agent engine: tool-approval interrupt */}
+        {interruptData?.agent && renderAgentApproval()}
 
         {/* Feature A: live parallel-research progress (Send fan-out) */}
         {progress.length > 0 && (
@@ -1029,14 +1301,18 @@ export default function ChatInterface() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder={
-                !threadId
-                  ? "Ask me anything to start your research..."
+                interruptData?.agent
+                  ? "Approve / edit / reject the tool call above…"
+                  : !threadId
+                  ? engine === "agent"
+                    ? "Ask the agent anything (it decides when to search)…"
+                    : "Ask me anything to start your research..."
                   : interruptData
                   ? "Type your response or click an option above..."
                   : "Continue the conversation..."
               }
               className="input-field w-full pr-10"
-              disabled={isLoading}
+              disabled={isLoading || !!interruptData?.agent}
             />
             {input && (
               <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
