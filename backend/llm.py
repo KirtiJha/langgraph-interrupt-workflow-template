@@ -50,20 +50,51 @@ def _truthy(value: Optional[str]) -> bool:
     return (value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _has_tool_result(messages: List[BaseMessage]) -> bool:
+    return any(getattr(m, "type", None) == "tool" for m in messages)
+
+
+def _last_human(messages: List[BaseMessage]) -> str:
+    for msg in reversed(messages):
+        if getattr(msg, "type", None) in ("human", "user"):
+            return str(msg.content)
+    return "the topic"
+
+
 class MockChatModel(BaseChatModel):
     """A tiny offline chat model used when no provider is configured.
 
     It produces context-aware canned responses and supports streaming so the
-    full workflow (including the streaming endpoint) works without API keys.
+    full workflow runs without API keys. When tools are bound (e.g. by
+    ``create_agent``), it drives one tool call and then a final answer, so the
+    agent engine — including human-in-the-loop tool approval — also works
+    offline.
     """
+
+    # Populated by ``bind_tools`` as a list of [tool_name, first_arg_name].
+    tool_specs: list = []
 
     @property
     def _llm_type(self) -> str:
         return "mock-chat-model"
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> "MockChatModel":
-        # The mock never emits tool calls; accept binding so create_agent works.
-        return self
+        specs: list = []
+        for t in tools:
+            name = getattr(t, "name", None) or (
+                t.get("name") if isinstance(t, dict) else None
+            )
+            arg_names = list(getattr(t, "args", {}) or {})
+            if name:
+                specs.append([name, arg_names[0] if arg_names else "query"])
+        return self.model_copy(update={"tool_specs": specs})
+
+    def _tool_call_message(self, messages: List[BaseMessage]) -> Optional[dict]:
+        """Return a single tool call to make, or None to answer directly."""
+        if self.tool_specs and not _has_tool_result(messages):
+            name, arg = self.tool_specs[0]
+            return {"name": name, "args": {arg: _last_human(messages)}, "id": "mock_call_1"}
+        return None
 
     @staticmethod
     def _canned_response(messages: List[BaseMessage]) -> str:
@@ -99,10 +130,12 @@ class MockChatModel(BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> ChatResult:
-        content = self._canned_response(messages)
-        return ChatResult(
-            generations=[ChatGeneration(message=AIMessage(content=content))]
-        )
+        tool_call = self._tool_call_message(messages)
+        if tool_call:
+            message = AIMessage(content="", tool_calls=[tool_call])
+        else:
+            message = AIMessage(content=self._canned_response(messages))
+        return ChatResult(generations=[ChatGeneration(message=message)])
 
     async def _agenerate(
         self,
@@ -120,6 +153,24 @@ class MockChatModel(BaseChatModel):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ):
+        import json
+
+        tool_call = self._tool_call_message(messages)
+        if tool_call:
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[
+                        {
+                            "name": tool_call["name"],
+                            "args": json.dumps(tool_call["args"]),
+                            "id": tool_call["id"],
+                            "index": 0,
+                        }
+                    ],
+                )
+            )
+            return
         for token in self._canned_response(messages).split(" "):
             chunk = ChatGenerationChunk(message=AIMessageChunk(content=token + " "))
             if run_manager:

@@ -30,6 +30,17 @@ Most "agent" demos run start-to-finish with no human control. Real-world systems
 
 All three use the same primitive: `interrupt()` pauses the graph, **persists state**, and waits for `Command(resume=...)`.
 
+### 🔀 Two engines, one UI
+
+The chat app ships with a live **Workflow ↔ Agent** toggle so you can compare the two control paradigms on the same screen:
+
+| Engine | Control flow | Human-in-the-loop |
+|--------|--------------|-------------------|
+| **Workflow** (`graph.py`) | Deterministic StateGraph — fixed interrupt points + parallel `Send` research | Structured choices at each step |
+| **Agent** (`agent.py`) | Model-driven `create_agent` loop — the LLM decides when to call tools | Approve / edit / reject the tool call before it runs |
+
+Both share the same provider-agnostic LLM, `web_search` tool, and long-term memory.
+
 ## 🚀 Features
 
 - **🧩 Human-in-the-loop, done right** — multiple interrupt points, resume with approve/edit/redirect.
@@ -196,6 +207,8 @@ langgraph dev          # opens LangGraph Studio with the research, approval, and
 | `/history/{thread_id}` | GET | List checkpoints for time travel |
 | `/fork` | POST | Rewind to a checkpoint and resume a different path |
 | `/get_state/{thread_id}` | GET | Inspect current workflow state |
+| `/agent/start` | POST | Start/continue the agent engine (SSE) |
+| `/agent/decide` | POST | Resume the agent with `approve`/`edit`/`reject`/`respond` (SSE) |
 | `/approval/start` | POST | Draft content for a task and pause for review |
 | `/approval/decide` | POST | Resume with `approve` / `edit` / `reject` |
 | `/health` | GET | Liveness probe |
