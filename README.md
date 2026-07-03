@@ -45,8 +45,11 @@ Both share the same provider-agnostic LLM, `web_search` tool, and long-term memo
 
 - **🧩 Human-in-the-loop, done right** — multiple interrupt points, resume with approve/edit/redirect.
 - **🔀 Parallel research (`Send`)** — a planner fans out concurrent sub-researchers (map-reduce) via `Command(goto=[Send(...)])`, with **live progress streaming**.
-- **🧠 Long-term memory** — a LangGraph `Store` remembers a user's topics & preferences **across sessions**, not just within a thread.
+- **🧠 Long-term memory** — a LangGraph `Store` remembers a user's topics & preferences **across sessions**, not just within a thread. Optional **semantic recall** with embeddings.
 - **⏪ Time travel** — rewind to any past checkpoint and **fork** a different path; the original run is preserved.
+- **🛡️ Guardrail middleware** — composable safety layer that **redacts PII** before the model sees it and can block disallowed input, stacked with the HITL middleware.
+- **🔗 MCP tools** — optionally load tools from any **Model Context Protocol** server and expose them to the agent, gated by the same human approval.
+- **📦 Structured output** — opt in to a validated `ResearchSummary` object (`summary`, `key_findings`, `sources`, `confidence`).
 - **🔌 Provider-agnostic** — OpenAI, Anthropic, Google, Groq, Mistral, IBM watsonx, Ollama… via LangChain's `init_chat_model`. One env var to switch.
 - **🆓 Zero-config demo** — a streaming-capable mock model runs the whole app with **no API keys**.
 - **💾 Durable execution** — optional `AsyncSqliteSaver` checkpointer; workflows survive server restarts.
@@ -187,6 +190,52 @@ graph.astream(Command(resume=new_choice),
               config={"configurable": {"thread_id": tid, "checkpoint_id": cid}})
 ```
 
+## 🛡️ Production hardening
+
+Four optional layers turn the demo into something you'd ship. All degrade
+gracefully — the zero-config app is unaffected until you enable them.
+
+**Guardrail middleware (`backend/guardrails.py`).** A custom `AgentMiddleware`
+that runs on every model call, composed *alongside* the HITL middleware. It
+redacts PII before the model sees it (state is never mutated) and can refuse
+blocklisted input without calling the model at all:
+
+```python
+# middleware stack in build_agent():  guardrails wrap the model, HITL gates tools
+middleware = [GuardrailMiddleware.from_env(), HumanInTheLoopMiddleware(...)]
+```
+
+```env
+GUARDRAILS_ENABLED=true          # on by default, no extra deps
+GUARDRAILS_REDACT_PII=true       # mask emails / phones / cards / SSNs
+GUARDRAILS_BLOCKLIST=exploit,malware
+```
+
+**MCP tools (`backend/mcp_tools.py`).** Point `MCP_SERVERS` at any
+[Model Context Protocol](https://modelcontextprotocol.io) servers (inline JSON or
+a file path) and their tools are loaded and exposed to the agent — each gated by
+the same human approval as `web_search`:
+
+```env
+MCP_SERVERS='{"math": {"command": "python", "args": ["server.py"], "transport": "stdio"}}'
+# requires: pip install langchain-mcp-adapters
+```
+
+**Structured output (opt-in).** Set `AGENT_STRUCTURED_OUTPUT=true` (with a real
+model) and the agent returns a validated `ResearchSummary` in
+`state["structured_response"]`, surfaced on the agent SSE stream.
+
+**Semantic long-term memory.** Set `EMBEDDINGS_MODEL` and memories are recalled
+by *relevance* to the current question rather than recency:
+
+```env
+EMBEDDINGS_MODEL=openai:text-embedding-3-small
+EMBEDDING_DIMS=1536
+```
+
+See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for Docker, LangGraph Platform,
+and Postgres-backed self-hosting.
+
 ## 🔭 Visualize with LangGraph Studio
 
 ```bash
@@ -225,6 +274,11 @@ All configuration is via environment variables (see [`backend/.env.example`](bac
 | `USE_MOCK_LLM` | Force the offline mock model | `false` |
 | `TAVILY_API_KEY` | Enables live web search in `tools.py` | – |
 | `CHECKPOINT_DB` | Path to enable durable SQLite persistence | in-memory |
+| `GUARDRAILS_ENABLED` | Enable the PII-redaction / blocklist middleware | `true` |
+| `GUARDRAILS_BLOCKLIST` | Comma-separated phrases the agent refuses | – |
+| `MCP_SERVERS` | MCP server config (inline JSON or file path) | – |
+| `AGENT_STRUCTURED_OUTPUT` | Return a typed `ResearchSummary` from the agent | `false` |
+| `EMBEDDINGS_MODEL` | Embeddings model for semantic memory recall | – |
 | `CORS_ORIGINS` | Comma-separated allowed origins | `*` |
 | `PORT` | Backend port | `8000` |
 
@@ -265,8 +319,10 @@ langgraph-interrupt-workflow-template/
 │   ├── main.py                # FastAPI app (lifespan-managed graphs, SSE streaming)
 │   ├── graph.py               # Multi-step human-in-the-loop research workflow
 │   ├── approval_workflow.py   # Approve / edit / reject workflow
-│   ├── agent.py               # create_agent + HumanInTheLoopMiddleware example
-│   ├── memory.py              # Cross-thread long-term memory (Store)
+│   ├── agent.py               # create_agent + HITL + guardrails + structured output
+│   ├── guardrails.py          # PII-redaction / blocklist middleware
+│   ├── mcp_tools.py           # Optional Model Context Protocol tool loader
+│   ├── memory.py              # Cross-thread long-term memory (Store, semantic-ready)
 │   ├── llm.py                 # Provider-agnostic LLM factory + offline mock model
 │   ├── tools.py               # Example web_search tool (Tavily / mock)
 │   ├── test_main.py           # Pytest suite
@@ -276,6 +332,7 @@ langgraph-interrupt-workflow-template/
 │   ├── app/page.tsx           # Research assistant chat
 │   ├── app/approval/page.tsx  # Approve / edit / reject UI
 │   └── Dockerfile
+├── docs/DEPLOYMENT.md         # Docker / LangGraph Platform / Postgres deploy guide
 ├── .devcontainer/             # GitHub Codespaces / VS Code dev container
 ├── langgraph.json             # LangGraph Studio config (research + approval + agent)
 ├── .github/workflows/ci.yml

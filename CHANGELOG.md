@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Guardrail middleware** (`backend/guardrails.py`): a custom `AgentMiddleware`
+  that redacts PII (emails, phone numbers, card/SSN-like numbers) *before the
+  model sees it* via `wrap_model_call`, and can refuse blocklisted input without
+  calling the model. Stacks with `HumanInTheLoopMiddleware` in the agent engine —
+  a demonstration of composable middleware. Configurable via `GUARDRAILS_*`
+  env vars; on by default with no extra dependencies.
+- **MCP tool integration** (`backend/mcp_tools.py`): optionally load tools from
+  any [Model Context Protocol](https://modelcontextprotocol.io) server via
+  `langchain-mcp-adapters` and expose them to the agent, gated by the same human
+  approval as `web_search`. Configure with `MCP_SERVERS` (inline JSON or a file
+  path); a no-op when unset.
+- **Structured output** (opt-in): with `AGENT_STRUCTURED_OUTPUT=true`, the agent
+  returns a validated `ResearchSummary` (`summary`, `key_findings`, `sources`,
+  `confidence`) in `state["structured_response"]`, surfaced on the agent SSE
+  stream.
+- **Semantic long-term memory**: `memory.build_store()` builds an embeddings-
+  indexed `Store` when `EMBEDDINGS_MODEL` is set, so `recall_memory` returns the
+  memories most *relevant* to the current question (with graceful fallback to
+  recency-based recall offline).
+- **Deployment guide** (`docs/DEPLOYMENT.md`) covering Docker Compose, LangGraph
+  Platform, and self-hosting with a durable checkpointer + Postgres store.
+
 - **Second backend engine: an agentic research assistant** (`backend/agent.py`)
   built with `create_agent` + `HumanInTheLoopMiddleware`, selectable via a live
   **Workflow ↔ Agent toggle** in the UI. The model drives the loop and pauses

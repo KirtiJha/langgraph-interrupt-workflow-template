@@ -211,5 +211,81 @@ def test_approval_reject_redrafts_and_pauses_again(client):
     assert data["revision_count"] == 1
 
 
+# --- Guardrail middleware (PII redaction + blocklist) -----------------------
+def test_guardrail_redacts_pii_before_model(client):
+    """The agent's tool call should only ever see masked PII."""
+    events = _sse(
+        client,
+        "POST",
+        "/agent/start",
+        json={"message": "research fuel cells, email me at jane@acme.com or 415-555-2671"},
+    )
+    state = next(e for e in events if e["type"] == "state")
+    query = state["tool_requests"][0]["args"]["query"]
+    assert "jane@acme.com" not in query
+    assert "[EMAIL]" in query
+    assert "[PHONE]" in query
+
+
+def test_guardrail_unit_redaction():
+    from guardrails import _redact
+
+    cleaned, count = _redact("mail a@b.com, ssn 123-45-6789")
+    assert count == 2
+    assert "[EMAIL]" in cleaned and "[SSN]" in cleaned
+
+
+def test_guardrail_unit_blocklist():
+    from langchain_core.messages import HumanMessage
+
+    from guardrails import GuardrailMiddleware
+
+    mw = GuardrailMiddleware(blocklist=["forbidden"])
+    assert mw._blocked_phrase([HumanMessage(content="this is FORBIDDEN")]) == "forbidden"
+    assert mw._blocked_phrase([HumanMessage(content="all good")]) is None
+
+
+def test_guardrail_from_env_disabled(monkeypatch):
+    from guardrails import GuardrailMiddleware
+
+    monkeypatch.setenv("GUARDRAILS_ENABLED", "false")
+    assert GuardrailMiddleware.from_env() is None
+
+
+# --- MCP tools (optional, off by default) -----------------------------------
+def test_mcp_tools_empty_when_unconfigured():
+    import asyncio
+
+    from mcp_tools import load_mcp_tools
+
+    assert asyncio.run(load_mcp_tools()) == []
+
+
+# --- Semantic memory store --------------------------------------------------
+def test_build_store_plain_offline():
+    from langgraph.store.memory import InMemoryStore
+
+    from memory import build_store
+
+    store = build_store()
+    assert isinstance(store, InMemoryStore)
+    # No embeddings configured → no vector index (plain, recency-based recall).
+    assert getattr(store, "index_config", None) is None
+
+
+# --- Structured output (opt-in) ---------------------------------------------
+def test_structured_agent_builds():
+    from agent import ResearchSummary, build_agent
+
+    agent = build_agent(structured=True)
+    assert agent is not None
+    assert set(ResearchSummary.model_fields) == {
+        "summary",
+        "key_findings",
+        "sources",
+        "confidence",
+    }
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

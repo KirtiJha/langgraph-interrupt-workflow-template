@@ -27,13 +27,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
 from agent import build_agent, stream_agent_response
 from approval_workflow import build_approval_graph
 from graph import build_research_graph, stream_research_response
-from memory import load_user_memory, save_user_memory
+from mcp_tools import load_mcp_tools
+from memory import build_store, load_user_memory, save_user_memory
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -43,9 +43,16 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Compile the graphs with a checkpointer (+ store for long-term memory)."""
-    # Cross-thread long-term memory. Swap for a Postgres-backed store in prod.
-    store = InMemoryStore()
+    # Cross-thread long-term memory, with semantic search when embeddings are
+    # configured (see memory.build_store). Swap for a Postgres store in prod.
+    store = build_store()
     app.state.store = store
+
+    # Optional MCP tools — empty unless MCP_SERVERS is configured (see mcp_tools).
+    mcp_tools = await load_mcp_tools()
+
+    def _build_agent(saver):
+        return build_agent(checkpointer=saver, store=store, extra_tools=mcp_tools)
 
     checkpoint_db = os.getenv("CHECKPOINT_DB")
     if checkpoint_db:
@@ -55,14 +62,14 @@ async def lifespan(app: FastAPI):
         async with AsyncSqliteSaver.from_conn_string(checkpoint_db) as saver:
             app.state.graph = build_research_graph(checkpointer=saver, store=store)
             app.state.approval_graph = build_approval_graph(checkpointer=saver)
-            app.state.agent_graph = build_agent(checkpointer=saver, store=store)
+            app.state.agent_graph = _build_agent(saver)
             yield
     else:
         logger.info("Using in-memory MemorySaver (set CHECKPOINT_DB for durability)")
         saver = MemorySaver()
         app.state.graph = build_research_graph(checkpointer=saver, store=store)
         app.state.approval_graph = build_approval_graph(checkpointer=saver)
-        app.state.agent_graph = build_agent(checkpointer=saver, store=store)
+        app.state.agent_graph = _build_agent(saver)
         yield
 
 
@@ -385,7 +392,7 @@ async def agent_start(data: AgentStart, request: Request):
     messages = []
     if is_new:
         # Inject cross-session memory as a leading system message (first turn only).
-        memory = await load_user_memory(store, data.user_id)
+        memory = await load_user_memory(store, data.user_id, query=data.message)
         if memory:
             messages.append(SystemMessage(content=f"Remembered context:\n{memory}"))
     messages.append(HumanMessage(content=data.message))

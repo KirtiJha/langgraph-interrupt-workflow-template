@@ -19,11 +19,14 @@ CLI demo: ``python agent.py "What are the latest advances in battery tech?"``
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+import os
+from typing import Any, List, Optional
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware
+from pydantic import BaseModel, Field
 
+from guardrails import GuardrailMiddleware
 from llm import get_llm
 from tools import web_search
 
@@ -39,22 +42,83 @@ SYSTEM_PROMPT = (
 AGENT_TOOLS = [web_search]
 
 
-def build_agent(checkpointer: Any | None = None, store: Any | None = None):
-    """Build a tool-using agent that requires approval before searching.
+class ResearchSummary(BaseModel):
+    """Structured result the agent can return when structured output is enabled.
 
-    ``HumanInTheLoopMiddleware`` interrupts before ``web_search`` runs. Resume
-    with ``Command(resume={"decisions": [{"type": "approve"}]})`` (or ``edit`` /
-    ``reject`` / ``respond``) to drive it.
+    Opt in with ``AGENT_STRUCTURED_OUTPUT=true`` and a real (non-mock) model.
+    ``create_agent`` then places a validated instance in
+    ``state["structured_response"]``.
     """
+
+    summary: str = Field(description="A concise 2-3 sentence answer to the question.")
+    key_findings: List[str] = Field(
+        default_factory=list, description="The most important findings, as bullet points."
+    )
+    sources: List[str] = Field(
+        default_factory=list, description="URLs or titles the answer draws on, if any."
+    )
+    confidence: str = Field(
+        default="medium", description="Rough confidence: low | medium | high."
+    )
+
+
+def _structured_output_enabled() -> bool:
+    return os.getenv("AGENT_STRUCTURED_OUTPUT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def build_agent(
+    checkpointer: Any | None = None,
+    store: Any | None = None,
+    extra_tools: Optional[list] = None,
+    structured: Optional[bool] = None,
+):
+    """Build a tool-using agent that requires approval before sensitive tools.
+
+    Middleware stack (order matters — outermost first):
+
+    1. :class:`~guardrails.GuardrailMiddleware` — redacts PII / blocks input
+       around every model call (skipped when guardrails are disabled).
+    2. ``HumanInTheLoopMiddleware`` — interrupts before ``web_search`` (and any
+       MCP tools) run. Resume with
+       ``Command(resume={"decisions": [{"type": "approve"}]})`` (or ``edit`` /
+       ``reject`` / ``respond``).
+
+    Args:
+        checkpointer: durable, resumable per-thread state.
+        store: cross-thread long-term memory (see ``memory.py``).
+        extra_tools: additional tools (e.g. MCP tools) exposed to the agent and
+            gated by the same human approval as ``web_search``.
+        structured: force structured output on/off. When ``None``, follows the
+            ``AGENT_STRUCTURED_OUTPUT`` environment variable.
+    """
+    tools = [*AGENT_TOOLS, *(extra_tools or [])]
+
+    # Gate every tool (built-in + MCP) behind human approval.
     hitl = HumanInTheLoopMiddleware(
-        interrupt_on={"web_search": True},
+        interrupt_on={t.name: True for t in tools},
         description_prefix="The agent wants to run a tool and needs your approval",
     )
+
+    middleware: list = []
+    guardrail = GuardrailMiddleware.from_env()
+    if guardrail is not None:
+        middleware.append(guardrail)
+    middleware.append(hitl)
+
+    use_structured = _structured_output_enabled() if structured is None else structured
+    response_format = ResearchSummary if use_structured else None
+
     return create_agent(
         get_llm(),
-        tools=AGENT_TOOLS,
+        tools=tools,
         system_prompt=SYSTEM_PROMPT,
-        middleware=[hitl],
+        middleware=middleware,
+        response_format=response_format,
         checkpointer=checkpointer,
         store=store,
     )
@@ -85,9 +149,14 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
     interrupt_value = None
     try:
         async for mode, data in graph.astream(
-            command_input, config=config, stream_mode=["updates", "messages"]
+            command_input, config=config, stream_mode=["updates", "messages", "custom"]
         ):
-            if mode == "updates" and isinstance(data, dict):
+            if mode == "custom":
+                # Guardrail (PII redaction / blocklist) and other progress events.
+                event = data if isinstance(data, dict) else {"message": str(data)}
+                event.setdefault("type", "progress")
+                yield event
+            elif mode == "updates" and isinstance(data, dict):
                 if "__interrupt__" in data:
                     interrupt_value = data["__interrupt__"][0].value
                 elif "tools" in data:
@@ -111,6 +180,14 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
             "final_response": final,
             "current_step": "awaiting_approval" if state.next else "completed",
         }
+        # Surface structured output when the agent was built with a response_format.
+        structured = values.get("structured_response")
+        if structured is not None and not state.next:
+            event["structured_response"] = (
+                structured.model_dump()
+                if hasattr(structured, "model_dump")
+                else structured
+            )
         if interrupt_value is not None:
             event.update(_pending_interrupt(interrupt_value))
         yield event
