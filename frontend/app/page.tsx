@@ -107,6 +107,8 @@ export default function ChatInterface() {
   } | null>(null);
   // Structured output (ResearchSummary) when AGENT_STRUCTURED_OUTPUT is enabled.
   const [structuredResponse, setStructuredResponse] = useState<any | null>(null);
+  // Active backend features (from /capabilities) shown as header status badges.
+  const [capabilities, setCapabilities] = useState<any | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -125,6 +127,16 @@ export default function ChatInterface() {
       localStorage.setItem("lg_user_id", id);
     }
     setUserId(id);
+  }, []);
+
+  // Load which optional backend features are active (for the status strip).
+  useEffect(() => {
+    fetch(`${API_URL}/capabilities`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => data && setCapabilities(data))
+      .catch(() => {
+        /* backend not up yet — the strip simply stays hidden */
+      });
   }, []);
 
   // Map a pending interrupt node / message to its choice options.
@@ -882,6 +894,90 @@ export default function ChatInterface() {
           </div>
         </div>
       </div>
+
+      {/* Status strip: which optional backend features are active */}
+      {capabilities && (
+        <div className="bg-white/60 backdrop-blur-sm border-b border-white/30 px-4 py-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
+                capabilities.model?.mock
+                  ? "bg-gray-50 border-gray-200 text-gray-500"
+                  : "bg-purple-50 border-purple-200 text-purple-700"
+              }`}
+              title={
+                capabilities.model?.mock
+                  ? "Offline mock model — set LLM_MODEL + a provider key for a real LLM"
+                  : "Live provider model"
+              }
+            >
+              <Bot className="w-3 h-3" />
+              {capabilities.model?.mock ? "Mock model" : capabilities.model?.name}
+            </span>
+
+            {capabilities.guardrails?.enabled && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-emerald-50 border-emerald-200 text-emerald-700"
+                title={
+                  "Guardrail middleware active" +
+                  (capabilities.guardrails.redact_pii ? " · redacts PII" : "") +
+                  (capabilities.guardrails.blocklist_count
+                    ? ` · ${capabilities.guardrails.blocklist_count} blocked phrase(s)`
+                    : "")
+                }
+              >
+                <ShieldCheck className="w-3 h-3" />
+                Guardrails
+              </span>
+            )}
+
+            {capabilities.semantic_memory && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-blue-50 border-blue-200 text-blue-700"
+                title="Long-term memory uses embeddings for semantic recall"
+              >
+                <Brain className="w-3 h-3" />
+                Semantic memory
+              </span>
+            )}
+
+            {capabilities.structured_output && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-indigo-50 border-indigo-200 text-indigo-700"
+                title="The agent returns a validated ResearchSummary object"
+              >
+                <ListChecks className="w-3 h-3" />
+                Structured output
+              </span>
+            )}
+
+            {capabilities.mcp?.enabled ? (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-teal-50 border-teal-200 text-teal-700"
+                title={`MCP tools: ${capabilities.mcp.tools.join(", ")}`}
+              >
+                <Settings className="w-3 h-3" />
+                {capabilities.mcp.tools.length} MCP tool
+                {capabilities.mcp.tools.length === 1 ? "" : "s"}
+                {capabilities.mcp.tools.length > 0 && (
+                  <span className="text-teal-500 font-normal">
+                    · {capabilities.mcp.tools.slice(0, 3).join(", ")}
+                    {capabilities.mcp.tools.length > 3 ? "…" : ""}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-gray-50 border-gray-200 text-gray-400"
+                title="Set MCP_SERVERS to load tools from Model Context Protocol servers"
+              >
+                <Settings className="w-3 h-3" />
+                No MCP tools
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">

@@ -62,13 +62,18 @@ class ResearchSummary(BaseModel):
     )
 
 
-def _structured_output_enabled() -> bool:
+def structured_output_enabled() -> bool:
+    """Whether AGENT_STRUCTURED_OUTPUT opts the agent into structured output."""
     return os.getenv("AGENT_STRUCTURED_OUTPUT", "").strip().lower() in (
         "1",
         "true",
         "yes",
         "on",
     )
+
+
+# Backwards-compatible private alias.
+_structured_output_enabled = structured_output_enabled
 
 
 def build_agent(

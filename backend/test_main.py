@@ -27,6 +27,18 @@ def test_health(client):
     assert response.json()["status"] == "ok"
 
 
+def test_capabilities_reports_active_features(client):
+    caps = client.get("/capabilities").json()
+    # Offline defaults: mock model, guardrails on, no MCP, no semantic memory.
+    assert caps["model"]["mock"] is True
+    assert caps["guardrails"]["enabled"] is True
+    assert caps["guardrails"]["redact_pii"] is True
+    assert caps["structured_output"] is False
+    assert caps["semantic_memory"] is False
+    assert caps["mcp"]["enabled"] is False
+    assert caps["mcp"]["tools"] == []
+
+
 def test_start_chat_creates_thread_and_interrupts(client):
     response = client.post("/start", json={"message": "What is quantum computing?"})
     assert response.status_code == 200

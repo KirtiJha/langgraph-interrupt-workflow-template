@@ -260,6 +260,7 @@ langgraph dev          # opens LangGraph Studio with the research, approval, and
 | `/agent/decide` | POST | Resume the agent with `approve`/`edit`/`reject`/`respond` (SSE) |
 | `/approval/start` | POST | Draft content for a task and pause for review |
 | `/approval/decide` | POST | Resume with `approve` / `edit` / `reject` |
+| `/capabilities` | GET | Which optional features are active (guardrails, MCP tools, structured output, semantic memory) — drives the UI status strip |
 | `/health` | GET | Liveness probe |
 
 ## ⚙️ Configuration

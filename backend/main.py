@@ -29,15 +29,39 @@ from pydantic import BaseModel
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
-from agent import build_agent, stream_agent_response
+from agent import build_agent, stream_agent_response, structured_output_enabled
 from approval_workflow import build_approval_graph
 from graph import build_research_graph, stream_research_response
+from guardrails import GuardrailMiddleware
+from llm import using_mock_llm
 from mcp_tools import load_mcp_tools
 from memory import build_store, load_user_memory, save_user_memory
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
+
+
+def _capabilities(store, mcp_tools) -> dict:
+    """Describe which optional features are active, for the UI to display."""
+    guardrail = GuardrailMiddleware.from_env()
+    return {
+        "model": {
+            "mock": using_mock_llm(),
+            "name": None if using_mock_llm() else os.getenv("LLM_MODEL", "gpt-4o-mini"),
+        },
+        "guardrails": {
+            "enabled": guardrail is not None,
+            "redact_pii": bool(guardrail and guardrail.redact_pii),
+            "blocklist_count": len(guardrail.blocklist) if guardrail else 0,
+        },
+        "structured_output": structured_output_enabled(),
+        "semantic_memory": getattr(store, "index_config", None) is not None,
+        "mcp": {
+            "enabled": bool(mcp_tools),
+            "tools": [getattr(t, "name", "tool") for t in mcp_tools],
+        },
+    }
 
 
 @asynccontextmanager
@@ -50,6 +74,8 @@ async def lifespan(app: FastAPI):
 
     # Optional MCP tools — empty unless MCP_SERVERS is configured (see mcp_tools).
     mcp_tools = await load_mcp_tools()
+
+    app.state.capabilities = _capabilities(store, mcp_tools)
 
     def _build_agent(saver):
         return build_agent(checkpointer=saver, store=store, extra_tools=mcp_tools)
@@ -146,6 +172,12 @@ def _interrupt_info(result) -> tuple[bool, str | None]:
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/capabilities")
+async def capabilities(request: Request):
+    """Report which optional features are active (guardrails, MCP, etc.)."""
+    return getattr(request.app.state, "capabilities", {})
 
 
 @app.post("/start")

@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Feature status in the UI**: a new `/capabilities` endpoint reports which
+  optional features are active, and the chat header shows a status strip
+  (model, guardrails, semantic memory, structured output, and an MCP tools
+  count/line). The agent stream also surfaces live **guardrail** signals (a
+  "redacted N PII item(s)" / "blocked" chip) and a **structured summary** card.
 - **Guardrail middleware** (`backend/guardrails.py`): a custom `AgentMiddleware`
   that redacts PII (emails, phone numbers, card/SSN-like numbers) *before the
   model sees it* via `wrap_model_call`, and can refuse blocklisted input without
