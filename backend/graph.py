@@ -143,8 +143,14 @@ def _emit(payload: dict) -> None:
 
 # --- Memory: recall (start) -------------------------------------------------
 async def recall_memory(state: ResearchState) -> Dict[str, Any]:
-    """Load cross-thread memory for this user before planning."""
-    memory = await load_user_memory(get_active_store(), state.get("user_id"))
+    """Load cross-thread memory for this user before planning.
+
+    The current question is passed as the search ``query`` so a semantic store
+    recalls the *most relevant* memories (and a plain store recalls recent ones).
+    """
+    memory = await load_user_memory(
+        get_active_store(), state.get("user_id"), query=state.get("user_query")
+    )
     if memory:
         logger.info("Recalled %d chars of long-term memory", len(memory))
     return {"user_memory": memory}

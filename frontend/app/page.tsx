@@ -17,6 +17,9 @@ import {
   AlertCircle,
   History,
   Clock,
+  ShieldCheck,
+  ShieldAlert,
+  ListChecks,
 } from "lucide-react";
 
 interface Message {
@@ -96,6 +99,16 @@ export default function ChatInterface() {
   const [agentRejecting, setAgentRejecting] = useState(false);
   const [agentArgsText, setAgentArgsText] = useState("");
   const [agentFeedback, setAgentFeedback] = useState("");
+  // Guardrail signals (PII redaction / blocklist) emitted by the agent engine.
+  const [guardrailNotice, setGuardrailNotice] = useState<{
+    action: string;
+    count?: number;
+    phrase?: string;
+  } | null>(null);
+  // Structured output (ResearchSummary) when AGENT_STRUCTURED_OUTPUT is enabled.
+  const [structuredResponse, setStructuredResponse] = useState<any | null>(null);
+  // Active backend features (from /capabilities) shown as header status badges.
+  const [capabilities, setCapabilities] = useState<any | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -114,6 +127,16 @@ export default function ChatInterface() {
       localStorage.setItem("lg_user_id", id);
     }
     setUserId(id);
+  }, []);
+
+  // Load which optional backend features are active (for the status strip).
+  useEffect(() => {
+    fetch(`${API_URL}/capabilities`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => data && setCapabilities(data))
+      .catch(() => {
+        /* backend not up yet — the strip simply stays hidden */
+      });
   }, []);
 
   // Map a pending interrupt node / message to its choice options.
@@ -383,6 +406,8 @@ export default function ChatInterface() {
     setIsLoading(true);
     setInterruptData(null);
     setProgress([]);
+    setGuardrailNotice(null);
+    setStructuredResponse(null);
     let assistantMessage = "";
     let assistantAdded = false;
 
@@ -390,6 +415,13 @@ export default function ChatInterface() {
       await consumeStream(path, body, (data) => {
         if (data.type === "thread") {
           setThreadId(data.thread_id);
+        } else if (data.type === "guardrail") {
+          // Safety middleware fired: PII was redacted or input was blocked.
+          setGuardrailNotice({
+            action: data.action,
+            count: data.count,
+            phrase: data.phrase,
+          });
         } else if (data.type === "progress") {
           setIsLoading(false);
           setProgress((prev) => [...prev, data.message || "Working…"]);
@@ -411,6 +443,9 @@ export default function ChatInterface() {
         } else if (data.type === "state") {
           setProgress([]);
           setCurrentStep(data.current_step || "agent");
+          if (data.structured_response) {
+            setStructuredResponse(data.structured_response);
+          }
           if (data.requires_input && data.tool_requests?.length) {
             // Reset the approval editor for the new tool request.
             setAgentEditing(false);
@@ -467,6 +502,8 @@ export default function ChatInterface() {
     setCurrentStep("idle");
     setForkCheckpoint(null);
     setShowHistory(false);
+    setGuardrailNotice(null);
+    setStructuredResponse(null);
   };
 
   const continueChat = async (message: string) => {
@@ -858,6 +895,90 @@ export default function ChatInterface() {
         </div>
       </div>
 
+      {/* Status strip: which optional backend features are active */}
+      {capabilities && (
+        <div className="bg-white/60 backdrop-blur-sm border-b border-white/30 px-4 py-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
+                capabilities.model?.mock
+                  ? "bg-gray-50 border-gray-200 text-gray-500"
+                  : "bg-purple-50 border-purple-200 text-purple-700"
+              }`}
+              title={
+                capabilities.model?.mock
+                  ? "Offline mock model — set LLM_MODEL + a provider key for a real LLM"
+                  : "Live provider model"
+              }
+            >
+              <Bot className="w-3 h-3" />
+              {capabilities.model?.mock ? "Mock model" : capabilities.model?.name}
+            </span>
+
+            {capabilities.guardrails?.enabled && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-emerald-50 border-emerald-200 text-emerald-700"
+                title={
+                  "Guardrail middleware active" +
+                  (capabilities.guardrails.redact_pii ? " · redacts PII" : "") +
+                  (capabilities.guardrails.blocklist_count
+                    ? ` · ${capabilities.guardrails.blocklist_count} blocked phrase(s)`
+                    : "")
+                }
+              >
+                <ShieldCheck className="w-3 h-3" />
+                Guardrails
+              </span>
+            )}
+
+            {capabilities.semantic_memory && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-blue-50 border-blue-200 text-blue-700"
+                title="Long-term memory uses embeddings for semantic recall"
+              >
+                <Brain className="w-3 h-3" />
+                Semantic memory
+              </span>
+            )}
+
+            {capabilities.structured_output && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-indigo-50 border-indigo-200 text-indigo-700"
+                title="The agent returns a validated ResearchSummary object"
+              >
+                <ListChecks className="w-3 h-3" />
+                Structured output
+              </span>
+            )}
+
+            {capabilities.mcp?.enabled ? (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-teal-50 border-teal-200 text-teal-700"
+                title={`MCP tools: ${capabilities.mcp.tools.join(", ")}`}
+              >
+                <Settings className="w-3 h-3" />
+                {capabilities.mcp.tools.length} MCP tool
+                {capabilities.mcp.tools.length === 1 ? "" : "s"}
+                {capabilities.mcp.tools.length > 0 && (
+                  <span className="text-teal-500 font-normal">
+                    · {capabilities.mcp.tools.slice(0, 3).join(", ")}
+                    {capabilities.mcp.tools.length > 3 ? "…" : ""}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-gray-50 border-gray-200 text-gray-400"
+                title="Set MCP_SERVERS to load tools from Model Context Protocol servers"
+              >
+                <Settings className="w-3 h-3" />
+                No MCP tools
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 && (
@@ -1202,6 +1323,72 @@ export default function ChatInterface() {
                   </li>
                 ))}
               </ul>
+            </div>
+          </div>
+        )}
+
+        {/* Guardrail signal: PII redaction / blocklist (agent engine) */}
+        {guardrailNotice && (
+          <div className="flex justify-start animate-fade-in">
+            {guardrailNotice.action === "blocked" ? (
+              <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-full px-3 py-1.5 text-xs font-medium shadow-soft">
+                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  Guardrail blocked this request
+                  {guardrailNotice.phrase ? ` (“${guardrailNotice.phrase}”)` : ""}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full px-3 py-1.5 text-xs font-medium shadow-soft">
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  Guardrail redacted {guardrailNotice.count ?? "some"} PII item
+                  {guardrailNotice.count === 1 ? "" : "s"} before the model
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Structured output: ResearchSummary (AGENT_STRUCTURED_OUTPUT) */}
+        {structuredResponse && (
+          <div className="flex justify-start animate-fade-in">
+            <div className="bg-white border border-indigo-100 rounded-xl px-4 py-3 shadow-soft max-w-2xl w-full">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-sm font-semibold text-indigo-800">
+                  <ListChecks className="w-4 h-4" /> Structured summary
+                </div>
+                {structuredResponse.confidence && (
+                  <span className="text-[11px] font-medium text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-full px-2 py-0.5">
+                    confidence: {structuredResponse.confidence}
+                  </span>
+                )}
+              </div>
+              {structuredResponse.summary && (
+                <p className="text-sm text-gray-700 mb-2">
+                  {structuredResponse.summary}
+                </p>
+              )}
+              {Array.isArray(structuredResponse.key_findings) &&
+                structuredResponse.key_findings.length > 0 && (
+                  <ul className="space-y-1 mb-2">
+                    {structuredResponse.key_findings.map((f: string, i: number) => (
+                      <li
+                        key={i}
+                        className="flex items-start gap-2 text-xs text-gray-600"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5 text-indigo-500 mt-0.5 shrink-0" />
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              {Array.isArray(structuredResponse.sources) &&
+                structuredResponse.sources.length > 0 && (
+                  <div className="text-[11px] text-gray-400 border-t border-gray-100 pt-2">
+                    Sources: {structuredResponse.sources.join(" · ")}
+                  </div>
+                )}
             </div>
           </div>
         )}
