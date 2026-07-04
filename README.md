@@ -30,16 +30,17 @@ Most "agent" demos run start-to-finish with no human control. Real-world systems
 
 All three use the same primitive: `interrupt()` pauses the graph, **persists state**, and waits for `Command(resume=...)`.
 
-### 🔀 Two engines, one UI
+### 🔀 Three engines, one UI
 
-The chat app ships with a live **Workflow ↔ Agent** toggle so you can compare the two control paradigms on the same screen:
+The chat app ships with a live **Workflow ↔ Agent ↔ Deep Agent** toggle so you can compare the control paradigms on the same screen:
 
 | Engine | Control flow | Human-in-the-loop |
 |--------|--------------|-------------------|
 | **Workflow** (`graph.py`) | Deterministic StateGraph — fixed interrupt points + parallel `Send` research | Structured choices at each step |
 | **Agent** (`agent.py`) | Model-driven `create_agent` loop — the LLM decides when to call tools | Approve / edit / reject the tool call before it runs |
+| **Deep Agent** (`deep_agent.py`) | Plans with a to-do list, spawns **researcher + critic subagents**, uses a virtual filesystem for scratch space | Same tool approval, now inside a planning/delegation loop |
 
-Both share the same provider-agnostic LLM, `web_search` tool, and long-term memory.
+All three share the same provider-agnostic LLM, `web_search` tool, and long-term memory. *(The Deep Agent runs offline too, but its planning/delegation only becomes visible with a real provider model.)*
 
 ## 🚀 Features
 
@@ -50,6 +51,7 @@ Both share the same provider-agnostic LLM, `web_search` tool, and long-term memo
 - **🛡️ Guardrail middleware** — composable safety layer that **redacts PII** before the model sees it and can block disallowed input, stacked with the HITL middleware.
 - **🔗 MCP tools** — optionally load tools from any **Model Context Protocol** server and expose them to the agent, gated by the same human approval.
 - **📦 Structured output** — opt in to a validated `ResearchSummary` object (`summary`, `key_findings`, `sources`, `confidence`).
+- **🧠 Deep Agent engine** — a third engine (`deepagents`) that **plans**, spawns **researcher + critic subagents**, and uses a virtual filesystem — with the same tool-approval HITL.
 - **🧱 Middleware power-pack** — prebuilt **summarization**, **call/tool-call limits**, **model retry**, **fallback**, and a **TodoList planner**, composed with the custom guardrail + HITL middleware.
 - **♻️ Resilient workflow (LangGraph 1.2)** — per-node **retries**, **timeouts**, and **compensation** (`error_handler`) so failures degrade gracefully instead of 500ing.
 - **🔌 Provider-agnostic** — OpenAI, Anthropic, Google, Groq, Mistral, IBM watsonx, Ollama… via LangChain's `init_chat_model`. One env var to switch.
@@ -281,10 +283,10 @@ and Postgres-backed self-hosting.
 
 ```bash
 pip install "langgraph-cli[inmem]"
-langgraph dev          # opens LangGraph Studio with the research, approval, and agent graphs
+langgraph dev          # opens LangGraph Studio with the research, approval, agent, and deep_agent graphs
 ```
 
-`langgraph.json` registers all three graphs so you can step through interrupts visually.
+`langgraph.json` registers all four graphs so you can step through interrupts visually.
 
 ## 📡 API reference
 
@@ -299,6 +301,8 @@ langgraph dev          # opens LangGraph Studio with the research, approval, and
 | `/get_state/{thread_id}` | GET | Inspect current workflow state |
 | `/agent/start` | POST | Start/continue the agent engine (SSE) |
 | `/agent/decide` | POST | Resume the agent with `approve`/`edit`/`reject`/`respond` (SSE) |
+| `/deep/start` | POST | Start/continue the Deep Agent engine (planning + subagents, SSE) |
+| `/deep/decide` | POST | Resume the Deep Agent with a tool-approval decision (SSE) |
 | `/approval/start` | POST | Draft content for a task and pause for review |
 | `/approval/decide` | POST | Resume with `approve` / `edit` / `reject` |
 | `/capabilities` | GET | Which optional features are active (guardrails, MCP tools, structured output, semantic memory) — drives the UI status strip |
@@ -367,6 +371,7 @@ langgraph-interrupt-workflow-template/
 │   ├── graph.py               # Multi-step human-in-the-loop research workflow
 │   ├── approval_workflow.py   # Approve / edit / reject workflow
 │   ├── agent.py               # create_agent + HITL + guardrails + structured output
+│   ├── deep_agent.py          # Deep Agent engine (planning + researcher/critic subagents)
 │   ├── guardrails.py          # PII-redaction / blocklist middleware
 │   ├── middleware_pack.py     # Prebuilt middleware (summarization, limits, retry, todos)
 │   ├── mcp_tools.py           # Optional Model Context Protocol tool loader
@@ -382,7 +387,7 @@ langgraph-interrupt-workflow-template/
 │   └── Dockerfile
 ├── docs/DEPLOYMENT.md         # Docker / LangGraph Platform / Postgres deploy guide
 ├── .devcontainer/             # GitHub Codespaces / VS Code dev container
-├── langgraph.json             # LangGraph Studio config (research + approval + agent)
+├── langgraph.json             # LangGraph Studio config (research + approval + agent + deep_agent)
 ├── .github/workflows/ci.yml
 ├── Dockerfile                 # Backend image
 ├── docker-compose.yml         # Backend + frontend services

@@ -3,7 +3,8 @@
   "graphs": {
     "research": "./backend/graph.py:build_research_graph",
     "approval": "./backend/approval_workflow.py:build_approval_graph",
-    "agent": "./backend/agent.py:build_agent"
+    "agent": "./backend/agent.py:build_agent",
+    "deep_agent": "./backend/deep_agent.py:build_deep_agent"
   },
   "env": "./backend/.env",
   "python_version": "3.11"
