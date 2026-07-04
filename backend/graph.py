@@ -13,6 +13,7 @@ configuration via a built-in mock model.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
@@ -20,13 +21,42 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.types import Command, Send, interrupt
+from langgraph.types import Command, RetryPolicy, Send, interrupt
 
 from llm import get_llm
 from memory import get_active_store, load_user_memory, save_user_memory
 from tools import web_search
 
 logger = logging.getLogger(__name__)
+
+
+# --- Resilience config (LangGraph 1.2) --------------------------------------
+def _retry_max_attempts() -> int:
+    try:
+        return max(1, int(os.getenv("RETRY_MAX_ATTEMPTS", "3")))
+    except ValueError:
+        return 3
+
+
+def _node_timeout() -> Optional[float]:
+    """Per-node wall-clock timeout in seconds (None disables)."""
+    raw = os.getenv("NODE_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+        return value if value > 0 else None
+    except ValueError:
+        return None
+
+
+def resilience_config() -> dict:
+    """Report the active resilience settings (for /capabilities)."""
+    return {
+        "retry_max_attempts": _retry_max_attempts(),
+        "node_timeout_seconds": _node_timeout(),
+        "compensation": True,  # error_handler fallbacks on the critical LLM nodes
+    }
 
 # How many parallel sub-questions to research for each approach.
 SUBQUERY_COUNT = {"simplified": 2, "focused": 2, "continue_context": 3, "proceed": 4}
@@ -442,8 +472,49 @@ async def persist_memory(state: ResearchState) -> Dict[str, Any]:
     return {}
 
 
+# --- Compensation handlers (run after a node's retries are exhausted) -------
+async def _analysis_fallback(state: ResearchState) -> Command:
+    """Saga-style compensation: if analysis fails, degrade to the raw findings."""
+    logger.warning("deep_analyzer failed after retries — using fallback analysis")
+    summary = "\n".join(state.get("research_results", [])) or "No findings were gathered."
+    return Command(
+        goto="format_selection_interrupt",
+        update={
+            "analysis": (
+                "(Automatic fallback) The analysis step could not be completed, so "
+                "here is a summary of the raw findings:\n" + summary
+            ),
+            "current_step": "format_selection",
+        },
+    )
+
+
+async def _response_fallback(state: ResearchState) -> Command:
+    """Compensation: if final generation fails, return a graceful degraded answer."""
+    logger.warning("response_generator failed after retries — using fallback response")
+    text = (
+        state.get("analysis")
+        or "; ".join(state.get("research_results", []))
+        or "I wasn't able to complete the research this time. Please try again."
+    )
+    return Command(
+        goto="persist_memory",
+        update={
+            "messages": [AIMessage(content=text)],
+            "final_response": text,
+            "current_step": "completed",
+            "requires_user_input": False,
+        },
+    )
+
+
 def build_research_graph(checkpointer: Any | None = None, store: Any | None = None):
     """Build and compile the research workflow.
+
+    LLM-backed nodes are hardened with LangGraph 1.2 resilience primitives:
+    a ``retry_policy`` (retries transient errors with backoff), an optional
+    per-node ``timeout``, and ``error_handler`` compensation on the critical
+    analysis / response nodes so a failure degrades gracefully instead of 500ing.
 
     Args:
         checkpointer: A LangGraph checkpointer for durable, resumable state.
@@ -452,16 +523,35 @@ def build_research_graph(checkpointer: Any | None = None, store: Any | None = No
         store: A LangGraph ``BaseStore`` for cross-thread long-term memory.
             When ``None``, the memory nodes degrade to no-ops.
     """
+    retry = RetryPolicy(max_attempts=_retry_max_attempts())
+    timeout = _node_timeout()
+    # Common kwargs for LLM-backed nodes.
+    llm_node = {"retry_policy": retry}
+    if timeout is not None:
+        llm_node["timeout"] = timeout
+
     builder = StateGraph(ResearchState)
     builder.add_node("recall_memory", recall_memory)
     builder.add_node("research_planner_interrupt", research_planner_interrupt)
-    builder.add_node("query_planner", query_planner)
-    builder.add_node("sub_researcher", sub_researcher)
+    builder.add_node("query_planner", query_planner, **llm_node)
+    builder.add_node("sub_researcher", sub_researcher, **llm_node)
     builder.add_node("handle_cancel", handle_cancel)
     builder.add_node("research_direction_interrupt", research_direction_interrupt)
-    builder.add_node("deep_analyzer", deep_analyzer)
+    builder.add_node(
+        "deep_analyzer",
+        deep_analyzer,
+        error_handler=_analysis_fallback,
+        destinations=("format_selection_interrupt",),
+        **llm_node,
+    )
     builder.add_node("format_selection_interrupt", format_selection_interrupt)
-    builder.add_node("response_generator", response_generator)
+    builder.add_node(
+        "response_generator",
+        response_generator,
+        error_handler=_response_fallback,
+        destinations=("persist_memory",),
+        **llm_node,
+    )
     builder.add_node("persist_memory", persist_memory)
 
     builder.add_edge(START, "recall_memory")

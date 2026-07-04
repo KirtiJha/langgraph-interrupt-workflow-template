@@ -50,6 +50,8 @@ Both share the same provider-agnostic LLM, `web_search` tool, and long-term memo
 - **🛡️ Guardrail middleware** — composable safety layer that **redacts PII** before the model sees it and can block disallowed input, stacked with the HITL middleware.
 - **🔗 MCP tools** — optionally load tools from any **Model Context Protocol** server and expose them to the agent, gated by the same human approval.
 - **📦 Structured output** — opt in to a validated `ResearchSummary` object (`summary`, `key_findings`, `sources`, `confidence`).
+- **🧱 Middleware power-pack** — prebuilt **summarization**, **call/tool-call limits**, **model retry**, **fallback**, and a **TodoList planner**, composed with the custom guardrail + HITL middleware.
+- **♻️ Resilient workflow (LangGraph 1.2)** — per-node **retries**, **timeouts**, and **compensation** (`error_handler`) so failures degrade gracefully instead of 500ing.
 - **🔌 Provider-agnostic** — OpenAI, Anthropic, Google, Groq, Mistral, IBM watsonx, Ollama… via LangChain's `init_chat_model`. One env var to switch.
 - **🆓 Zero-config demo** — a streaming-capable mock model runs the whole app with **no API keys**.
 - **💾 Durable execution** — optional `AsyncSqliteSaver` checkpointer; workflows survive server restarts.
@@ -233,6 +235,45 @@ EMBEDDINGS_MODEL=openai:text-embedding-3-small
 EMBEDDING_DIMS=1536
 ```
 
+**Middleware power-pack (prebuilt LangChain middleware).** The agent composes a
+curated stack of production middleware alongside the custom guardrail and HITL
+middleware — all env-configurable, with defaults that never trigger in a short
+chat:
+
+- `SummarizationMiddleware` — compresses old messages so long threads don't
+  overflow the context window
+- `ModelCallLimitMiddleware` / `ToolCallLimitMiddleware` — runaway & cost guards
+- `ModelRetryMiddleware` — retries transient endpoint errors with backoff
+- `TodoListMiddleware` *(opt-in)* — a `write_todos` planning tool for the agent
+- `ModelFallbackMiddleware` *(opt-in)* — fall back to another model on failure
+
+```env
+AGENT_MODEL_CALL_LIMIT=25        # cap model calls per run
+AGENT_TODO_LIST=true             # add the planning tool
+AGENT_FALLBACK_MODEL=gpt-4o-mini # resilience across providers
+```
+
+**Resilient workflow (LangGraph 1.2).** The LLM-backed graph nodes are hardened
+with the newest LangGraph durability primitives: a `retry_policy` (retries
+transient failures with backoff), an optional per-node `timeout`, and
+`error_handler` **compensation** — if analysis or final generation fails, the run
+degrades to a graceful fallback (Saga pattern) instead of returning a 500:
+
+```python
+builder.add_node("response_generator", response_generator,
+                 retry_policy=RetryPolicy(max_attempts=3),
+                 error_handler=_response_fallback,        # graceful degrade
+                 destinations=("persist_memory",))
+```
+
+```env
+RETRY_MAX_ATTEMPTS=3
+NODE_TIMEOUT_SECONDS=30          # per-node wall-clock cap (empty = off)
+```
+
+The active feature set is reported by `GET /capabilities` and shown as a status
+strip in the chat header.
+
 See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for Docker, LangGraph Platform,
 and Postgres-backed self-hosting.
 
@@ -280,6 +321,11 @@ All configuration is via environment variables (see [`backend/.env.example`](bac
 | `MCP_SERVERS` | MCP server config (inline JSON or file path) | – |
 | `AGENT_STRUCTURED_OUTPUT` | Return a typed `ResearchSummary` from the agent | `false` |
 | `EMBEDDINGS_MODEL` | Embeddings model for semantic memory recall | – |
+| `AGENT_MODEL_CALL_LIMIT` | Cap model calls per agent run (runaway/cost guard) | `25` |
+| `AGENT_TODO_LIST` | Add a `write_todos` planning tool to the agent | `false` |
+| `AGENT_FALLBACK_MODEL` | Fall back to this model on failure | – |
+| `RETRY_MAX_ATTEMPTS` | Per-node retry attempts in the workflow | `3` |
+| `NODE_TIMEOUT_SECONDS` | Per-node wall-clock timeout | off |
 | `CORS_ORIGINS` | Comma-separated allowed origins | `*` |
 | `PORT` | Backend port | `8000` |
 
@@ -322,6 +368,7 @@ langgraph-interrupt-workflow-template/
 │   ├── approval_workflow.py   # Approve / edit / reject workflow
 │   ├── agent.py               # create_agent + HITL + guardrails + structured output
 │   ├── guardrails.py          # PII-redaction / blocklist middleware
+│   ├── middleware_pack.py     # Prebuilt middleware (summarization, limits, retry, todos)
 │   ├── mcp_tools.py           # Optional Model Context Protocol tool loader
 │   ├── memory.py              # Cross-thread long-term memory (Store, semantic-ready)
 │   ├── llm.py                 # Provider-agnostic LLM factory + offline mock model

@@ -29,9 +29,14 @@ from pydantic import BaseModel
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
-from agent import build_agent, stream_agent_response, structured_output_enabled
+from agent import (
+    agent_middleware_summary,
+    build_agent,
+    stream_agent_response,
+    structured_output_enabled,
+)
 from approval_workflow import build_approval_graph
-from graph import build_research_graph, stream_research_response
+from graph import build_research_graph, resilience_config, stream_research_response
 from guardrails import GuardrailMiddleware
 from llm import using_mock_llm
 from mcp_tools import load_mcp_tools
@@ -61,6 +66,8 @@ def _capabilities(store, mcp_tools) -> dict:
             "enabled": bool(mcp_tools),
             "tools": [getattr(t, "name", "tool") for t in mcp_tools],
         },
+        "middleware": agent_middleware_summary(),
+        "resilience": resilience_config(),
     }
 
 
