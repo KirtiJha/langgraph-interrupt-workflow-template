@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from guardrails import GuardrailMiddleware
 from llm import get_llm
+from middleware_pack import build_middleware_pack
 from tools import web_search
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,16 @@ def structured_output_enabled() -> bool:
 _structured_output_enabled = structured_output_enabled
 
 
+def agent_middleware_summary() -> list[str]:
+    """Names of the middleware active on the agent, for /capabilities reporting."""
+    names: list[str] = []
+    if GuardrailMiddleware.from_env() is not None:
+        names.append("guardrails")
+    names.extend(build_middleware_pack(get_llm())[1])
+    names.append("human_in_the_loop")
+    return names
+
+
 def build_agent(
     checkpointer: Any | None = None,
     store: Any | None = None,
@@ -102,6 +113,7 @@ def build_agent(
             ``AGENT_STRUCTURED_OUTPUT`` environment variable.
     """
     tools = [*AGENT_TOOLS, *(extra_tools or [])]
+    model = get_llm()
 
     # Gate every tool (built-in + MCP) behind human approval.
     hitl = HumanInTheLoopMiddleware(
@@ -109,17 +121,20 @@ def build_agent(
         description_prefix="The agent wants to run a tool and needs your approval",
     )
 
+    # Middleware order (outermost first): guardrail → prebuilt power-pack → HITL.
     middleware: list = []
     guardrail = GuardrailMiddleware.from_env()
     if guardrail is not None:
         middleware.append(guardrail)
+    pack, _active = build_middleware_pack(model)
+    middleware.extend(pack)
     middleware.append(hitl)
 
     use_structured = _structured_output_enabled() if structured is None else structured
     response_format = ResearchSummary if use_structured else None
 
     return create_agent(
-        get_llm(),
+        model,
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
         middleware=middleware,

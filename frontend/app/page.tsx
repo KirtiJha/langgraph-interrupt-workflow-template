@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   ListChecks,
+  Layers,
 } from "lucide-react";
 
 interface Message {
@@ -973,6 +974,35 @@ export default function ChatInterface() {
               >
                 <Settings className="w-3 h-3" />
                 No MCP tools
+              </span>
+            )}
+
+            {Array.isArray(capabilities.middleware) &&
+              capabilities.middleware.length > 0 && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-violet-50 border-violet-200 text-violet-700"
+                  title={`Agent middleware: ${capabilities.middleware.join(" · ")}`}
+                >
+                  <Layers className="w-3 h-3" />
+                  {capabilities.middleware.length} middleware
+                </span>
+              )}
+
+            {capabilities.resilience && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-amber-50 border-amber-200 text-amber-700"
+                title={
+                  `Resilient workflow — retries ×${capabilities.resilience.retry_max_attempts}` +
+                  (capabilities.resilience.node_timeout_seconds
+                    ? ` · ${capabilities.resilience.node_timeout_seconds}s node timeout`
+                    : "") +
+                  (capabilities.resilience.compensation
+                    ? " · graceful fallback on failure"
+                    : "")
+                }
+              >
+                <ShieldCheck className="w-3 h-3" />
+                Resilient
               </span>
             )}
           </div>

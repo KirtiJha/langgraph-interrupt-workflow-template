@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Middleware power-pack** (`backend/middleware_pack.py`): the agent composes a
+  curated set of prebuilt LangChain middleware alongside the custom guardrail and
+  HITL middleware — `SummarizationMiddleware` (context-overflow protection on long
+  threads), `ModelCallLimitMiddleware` / `ToolCallLimitMiddleware` (runaway & cost
+  guards), `ModelRetryMiddleware` (transient-error backoff), and opt-in
+  `TodoListMiddleware` (a `write_todos` planning tool) / `ModelFallbackMiddleware`.
+  All env-configurable with defaults that never trigger in a short chat.
+- **Resilient workflow (LangGraph 1.2)**: LLM-backed graph nodes now carry a
+  `retry_policy`, an optional per-node `timeout`, and `error_handler`
+  **compensation** — if analysis or final generation fails, the run degrades to a
+  graceful fallback (Saga pattern) instead of erroring. Configurable via
+  `RETRY_MAX_ATTEMPTS` / `NODE_TIMEOUT_SECONDS`.
+- `/capabilities` now reports the active `middleware` stack and `resilience`
+  settings, shown as new badges in the header status strip.
+
 - **Feature status in the UI**: a new `/capabilities` endpoint reports which
   optional features are active, and the chat header shows a status strip
   (model, guardrails, semantic memory, structured output, and an MCP tools

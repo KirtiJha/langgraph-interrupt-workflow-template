@@ -37,6 +37,11 @@ def test_capabilities_reports_active_features(client):
     assert caps["semantic_memory"] is False
     assert caps["mcp"]["enabled"] is False
     assert caps["mcp"]["tools"] == []
+    # Middleware power-pack + resilience are reported for the UI status strip.
+    assert "human_in_the_loop" in caps["middleware"]
+    assert any("model_call_limit" in m for m in caps["middleware"])
+    assert caps["resilience"]["retry_max_attempts"] >= 1
+    assert caps["resilience"]["compensation"] is True
 
 
 def test_start_chat_creates_thread_and_interrupts(client):
@@ -297,6 +302,65 @@ def test_structured_agent_builds():
         "sources",
         "confidence",
     }
+
+
+# --- Middleware power-pack --------------------------------------------------
+def test_middleware_pack_defaults():
+    from llm import get_llm
+    from middleware_pack import build_middleware_pack
+
+    middleware, names = build_middleware_pack(get_llm())
+    assert len(middleware) == len(names)
+    assert any("summarization" in n for n in names)
+    assert any("model_call_limit" in n for n in names)
+    assert any("model_retry" in n for n in names)
+
+
+def test_tool_call_limit_opt_in(monkeypatch):
+    from llm import get_llm
+    from middleware_pack import build_middleware_pack
+
+    monkeypatch.setenv("AGENT_TOOL_CALL_LIMIT", "5")
+    _, names = build_middleware_pack(get_llm())
+    assert any("tool_call_limit(5)" in n for n in names)
+
+
+# --- Resilience layer (LangGraph 1.2) ---------------------------------------
+def test_compensation_handlers_unit():
+    import asyncio
+
+    from graph import _analysis_fallback, _response_fallback
+
+    cmd = asyncio.run(_analysis_fallback({"research_results": ["f1", "f2"]}))
+    assert cmd.goto == "format_selection_interrupt"
+    assert "(Automatic fallback)" in cmd.update["analysis"]
+
+    cmd2 = asyncio.run(_response_fallback({"analysis": "A"}))
+    assert cmd2.goto == "persist_memory"
+    assert cmd2.update["final_response"]
+
+
+def test_resilience_analysis_compensation(client, monkeypatch):
+    """If the analysis node fails, the run degrades gracefully instead of 500ing."""
+    import graph as g
+    from llm import MockChatModel
+
+    class FailAnalyst(MockChatModel):
+        async def _agenerate(self, messages, stop=None, run_manager=None, **kw):
+            if any("expert analyst" in str(getattr(m, "content", "")) for m in messages):
+                raise ValueError("simulated analysis failure")
+            return await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kw)
+
+    monkeypatch.setattr(g, "get_llm", lambda **k: FailAnalyst())
+
+    thread_id = client.post("/start", json={"message": "resilience"}).json()["thread_id"]
+    for choice in ["proceed", "technical", "executive"]:
+        assert client.post("/resume", json={"thread_id": thread_id, "choice": choice}).status_code == 200
+
+    final = client.get(f"/get_state/{thread_id}").json()
+    assert final["requires_input"] is False
+    assert final["state"]["final_response"]  # completed despite the failure
+    assert "(Automatic fallback)" in final["state"]["analysis"]  # compensation ran
 
 
 if __name__ == "__main__":
