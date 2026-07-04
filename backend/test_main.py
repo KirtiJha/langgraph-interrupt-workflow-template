@@ -37,6 +37,10 @@ def test_capabilities_reports_active_features(client):
     assert caps["semantic_memory"] is False
     assert caps["mcp"]["enabled"] is False
     assert caps["mcp"]["tools"] == []
+    # Deep Agent engine is reported (installed, but "unavailable" on the mock model).
+    assert "deep_agent" in caps
+    assert caps["deep_agent"]["available"] is False  # mock model
+    assert caps["deep_agent"]["reason"]
     # Middleware power-pack + resilience are reported for the UI status strip.
     assert "human_in_the_loop" in caps["middleware"]
     assert any("model_call_limit" in m for m in caps["middleware"])
@@ -361,6 +365,25 @@ def test_resilience_analysis_compensation(client, monkeypatch):
     assert final["requires_input"] is False
     assert final["state"]["final_response"]  # completed despite the failure
     assert "(Automatic fallback)" in final["state"]["analysis"]  # compensation ran
+
+
+# --- Deep Agent engine (planning + subagents) -------------------------------
+def test_deep_agent_builds_offline():
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from deep_agent import build_deep_agent
+
+    agent = build_deep_agent(checkpointer=MemorySaver())
+    assert agent is not None  # compiles with subagents + HITL on the mock model
+
+
+def test_deep_start_streams_and_completes(client):
+    events = _sse(client, "POST", "/deep/start", json={"message": "compare batteries"})
+    assert any(e["type"] == "thread" for e in events)
+    state = next(e for e in events if e["type"] == "state")
+    # On the mock model the deep agent completes with a basic answer.
+    assert state["requires_input"] is False
+    assert state["final_response"]
 
 
 if __name__ == "__main__":

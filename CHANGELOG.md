@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Deep Agent engine** (`backend/deep_agent.py`): a third selectable engine built
+  on `deepagents` that **plans** (a `write_todos` to-do list), **delegates** to
+  `researcher` + `critic` **subagents** via a `task` tool, and uses a virtual
+  filesystem for scratch space — with the same `web_search` human approval as the
+  other engines. Added `/deep/start` + `/deep/decide` SSE endpoints and a third
+  option in the UI's engine toggle (Workflow / Agent / **Deep Agent**). The
+  `deepagents` import is optional: the app still boots (engine disabled) without
+  it. Registered the `deep_agent` graph in `langgraph.json`.
 - **Middleware power-pack** (`backend/middleware_pack.py`): the agent composes a
   curated set of prebuilt LangChain middleware alongside the custom guardrail and
   HITL middleware — `SummarizationMiddleware` (context-overflow protection on long

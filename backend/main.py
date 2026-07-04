@@ -46,6 +46,19 @@ load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
+# The Deep Agent engine needs the optional ``deepagents`` package. Import it
+# gracefully so the app still boots (with the engine disabled) if it's absent.
+try:
+    from deep_agent import build_deep_agent, deep_agent_available
+
+    DEEP_AGENT_ENABLED = True
+except Exception as exc:  # pragma: no cover - only when deepagents is missing
+    logger.warning("Deep Agent engine disabled (install 'deepagents'): %s", exc)
+    DEEP_AGENT_ENABLED = False
+
+    def deep_agent_available() -> bool:
+        return False
+
 
 def _capabilities(store, mcp_tools) -> dict:
     """Describe which optional features are active, for the UI to display."""
@@ -68,6 +81,18 @@ def _capabilities(store, mcp_tools) -> dict:
         },
         "middleware": agent_middleware_summary(),
         "resilience": resilience_config(),
+        "deep_agent": {
+            "installed": DEEP_AGENT_ENABLED,
+            "available": deep_agent_available(),
+            "reason": (
+                None
+                if deep_agent_available()
+                else "Deep Agent engine needs the 'deepagents' package."
+                if not DEEP_AGENT_ENABLED
+                else "Deep Agent plans and delegates to subagents — set LLM_MODEL "
+                "+ a provider key to see it in action."
+            ),
+        },
     }
 
 
@@ -96,6 +121,8 @@ async def lifespan(app: FastAPI):
             app.state.graph = build_research_graph(checkpointer=saver, store=store)
             app.state.approval_graph = build_approval_graph(checkpointer=saver)
             app.state.agent_graph = _build_agent(saver)
+            if DEEP_AGENT_ENABLED:
+                app.state.deep_agent = build_deep_agent(checkpointer=saver, store=store)
             yield
     else:
         logger.info("Using in-memory MemorySaver (set CHECKPOINT_DB for durability)")
@@ -103,6 +130,8 @@ async def lifespan(app: FastAPI):
         app.state.graph = build_research_graph(checkpointer=saver, store=store)
         app.state.approval_graph = build_approval_graph(checkpointer=saver)
         app.state.agent_graph = _build_agent(saver)
+        if DEEP_AGENT_ENABLED:
+            app.state.deep_agent = build_deep_agent(checkpointer=saver, store=store)
         yield
 
 
@@ -453,6 +482,61 @@ async def agent_start(data: AgentStart, request: Request):
 async def agent_decide(data: AgentDecision, request: Request):
     """Resume the agent with approve / edit / reject / respond decisions."""
     graph = request.app.state.agent_graph
+    config = {"configurable": {"thread_id": data.thread_id}}
+    command = Command(resume={"decisions": data.decisions})
+    return _sse(stream_agent_response(graph, data.thread_id, command, config))
+
+
+# --- Deep Agent engine (planning + subagents + HITL) ------------------------
+@app.post("/deep/start")
+async def deep_start(data: AgentStart, request: Request):
+    """Start (or continue) a Deep Agent run; streams planning, tools, approvals.
+
+    Uses the same SSE event shape as ``/agent/*`` so the frontend reuses one
+    handler. The Deep Agent plans, delegates to subagents, and pauses for tool
+    approval — most visible with a real provider model.
+    """
+    graph = getattr(request.app.state, "deep_agent", None)
+    if graph is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Deep Agent engine is not available (install 'deepagents').",
+        )
+    store = request.app.state.store
+    is_new = not data.thread_id
+    thread_id = data.thread_id or str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    messages = []
+    if is_new:
+        memory = await load_user_memory(store, data.user_id, query=data.message)
+        if memory:
+            messages.append(SystemMessage(content=f"Remembered context:\n{memory}"))
+    messages.append(HumanMessage(content=data.message))
+
+    async def gen():
+        yield {"type": "thread", "thread_id": thread_id}
+        final_seen = ""
+        async for ev in stream_agent_response(graph, thread_id, {"messages": messages}, config):
+            if ev.get("type") == "state" and not ev.get("requires_input"):
+                final_seen = ev.get("final_response", "")
+            yield ev
+        if final_seen:
+            await save_user_memory(
+                store, data.user_id, f"Asked the deep agent about: {data.message[:120]}"
+            )
+
+    return _sse(gen())
+
+
+@app.post("/deep/decide")
+async def deep_decide(data: AgentDecision, request: Request):
+    """Resume the Deep Agent with approve / edit / reject / respond decisions."""
+    graph = getattr(request.app.state, "deep_agent", None)
+    if graph is None:
+        raise HTTPException(status_code=503, detail="Deep Agent engine is not available.")
     config = {"configurable": {"thread_id": data.thread_id}}
     command = Command(resume={"decisions": data.decisions})
     return _sse(stream_agent_response(graph, data.thread_id, command, config))
