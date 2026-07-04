@@ -7,6 +7,10 @@ langchain-core>=1.4,<2
 langgraph-checkpoint-sqlite>=3.1,<4
 aiosqlite>=0.20
 
+# Deep Agent engine (planning + subagents). Optional — the app boots without it,
+# with the Deep Agent engine disabled.
+deepagents>=0.6,<1
+
 # API server
 fastapi>=0.115,<1
 uvicorn[standard]>=0.32,<1

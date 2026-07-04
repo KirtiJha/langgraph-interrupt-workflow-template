@@ -94,7 +94,9 @@ export default function ChatInterface() {
   const [showHistory, setShowHistory] = useState(false);
   const [forkCheckpoint, setForkCheckpoint] = useState<string | null>(null);
   // Which backend engine drives the conversation.
-  const [engine, setEngine] = useState<"workflow" | "agent">("workflow");
+  const [engine, setEngine] = useState<"workflow" | "agent" | "deep">(
+    "workflow"
+  );
   // Agent tool-approval editor state (lifted out of the card component).
   const [agentEditing, setAgentEditing] = useState(false);
   const [agentRejecting, setAgentRejecting] = useState(false);
@@ -478,8 +480,11 @@ export default function ChatInterface() {
     }
   };
 
+  // The agent + deep-agent engines share one SSE handler; only the path differs.
+  const agentBase = () => (engine === "deep" ? "/deep" : "/agent");
+
   const startAgent = async (message: string, threadOverride?: string) => {
-    await consumeAgentStream("/agent/start", {
+    await consumeAgentStream(`${agentBase()}/start`, {
       message,
       user_id: userId,
       thread_id: threadOverride,
@@ -488,11 +493,14 @@ export default function ChatInterface() {
 
   const agentDecide = async (decisions: Record<string, unknown>[]) => {
     if (!threadId) return;
-    await consumeAgentStream("/agent/decide", { thread_id: threadId, decisions });
+    await consumeAgentStream(`${agentBase()}/decide`, {
+      thread_id: threadId,
+      decisions,
+    });
   };
 
   // Switch engines: reset the conversation so each engine starts clean.
-  const switchEngine = (next: "workflow" | "agent") => {
+  const switchEngine = (next: "workflow" | "agent" | "deep") => {
     if (next === engine) return;
     setEngine(next);
     setThreadId(null);
@@ -559,12 +567,14 @@ export default function ChatInterface() {
     e.preventDefault();
     if (!input.trim()) return;
 
-    // Agent engine: a tool approval is handled with buttons, not free text.
-    if (engine === "agent" && interruptData?.agent) {
+    const isAgentic = engine === "agent" || engine === "deep";
+
+    // Agent / Deep Agent: a tool approval is handled with buttons, not free text.
+    if (isAgentic && interruptData?.agent) {
       return;
     }
 
-    if (engine === "agent") {
+    if (isAgentic) {
       addMessage("user", input);
       startAgent(input, threadId || undefined); // new thread, or follow-up turn
       setInput("");
@@ -868,6 +878,17 @@ export default function ChatInterface() {
               >
                 Agent
               </button>
+              <button
+                onClick={() => switchEngine("deep")}
+                className={`text-xs font-medium px-3 py-1 rounded-full transition-colors ${
+                  engine === "deep"
+                    ? "bg-white text-teal-700 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+                title="Deep Agent: plans, spawns researcher/critic subagents, and pauses for tool approval"
+              >
+                Deep Agent
+              </button>
             </div>
             {threadId && (
               <div className="hidden sm:flex items-center space-x-2 bg-green-50 px-3 py-1.5 rounded-full border border-green-200">
@@ -1005,6 +1026,24 @@ export default function ChatInterface() {
                 Resilient
               </span>
             )}
+
+            {capabilities.deep_agent?.installed && (
+              <span
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
+                  capabilities.deep_agent.available
+                    ? "bg-teal-50 border-teal-200 text-teal-700"
+                    : "bg-gray-50 border-gray-200 text-gray-400"
+                }`}
+                title={
+                  capabilities.deep_agent.available
+                    ? "Deep Agent engine ready — plans & delegates to subagents"
+                    : capabilities.deep_agent.reason
+                }
+              >
+                <Brain className="w-3 h-3" />
+                Deep Agent{capabilities.deep_agent.available ? "" : " (needs model)"}
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -1025,10 +1064,18 @@ export default function ChatInterface() {
               Welcome to AI Research Assistant
             </h2>
             <p className="text-gray-600 max-w-xl mx-auto text-sm leading-relaxed">
-              {engine === "agent"
+              {engine === "deep"
+                ? "Deep Agent engine: it plans with a to-do list, delegates to researcher & critic subagents, and pauses for tool approval. Its planning shines with a real model."
+                : engine === "agent"
                 ? "Agent engine: a model-driven create_agent loop. It decides when to search and pauses for your approval before running a tool (approve / edit / reject)."
-                : "Workflow engine: a deterministic graph with fixed interrupt points and parallel Send research. Switch to Agent in the header to compare paradigms."}
+                : "Workflow engine: a deterministic graph with fixed interrupt points and parallel Send research. Switch to Agent or Deep Agent in the header to compare paradigms."}
             </p>
+            {engine === "deep" && capabilities?.deep_agent?.available === false && (
+              <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                {capabilities.deep_agent.reason}
+              </p>
+            )}
             <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-3 max-w-3xl mx-auto">
               <div className="p-4 bg-white/60 backdrop-blur-sm rounded-xl border border-white/40 shadow-soft">
                 <Search className="w-6 h-6 text-primary-600 mx-auto mb-2" />
@@ -1521,7 +1568,9 @@ export default function ChatInterface() {
                 interruptData?.agent
                   ? "Approve / edit / reject the tool call above…"
                   : !threadId
-                  ? engine === "agent"
+                  ? engine === "deep"
+                    ? "Ask a research question — the deep agent will plan & delegate…"
+                    : engine === "agent"
                     ? "Ask the agent anything (it decides when to search)…"
                     : "Ask me anything to start your research..."
                   : interruptData
