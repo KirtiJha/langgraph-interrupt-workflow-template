@@ -61,6 +61,7 @@ All three share the same provider-agnostic LLM, `web_search` tool, and long-term
 - **📡 Streaming** — Server-Sent Events stream progress *and* the final answer to the UI.
 - **🔭 LangGraph Studio ready** — `langgraph.json` registers all graphs for `langgraph dev`.
 - **🎨 Modern UI** — Next.js 15 + React 19 chat interface with live progress and a rewind panel.
+- **📊 Evaluation harness** — score the agent on answer **correctness** *and* whether it **paused for approval** (`backend/evals`), offline or as a tracked LangSmith experiment.
 - **✅ Tested & CI'd** — pytest suite + GitHub Actions for backend and frontend.
 
 ## 🏗️ Architecture
@@ -362,6 +363,23 @@ cd backend
 USE_MOCK_LLM=true pytest -v     # fast, offline, no API keys
 ```
 
+## 📊 Evaluation
+
+A human-in-the-loop agent must be judged on answer quality **and** on whether it
+**pauses for approval before acting**. The harness in [`backend/evals/`](backend/evals)
+scores both — deterministic metrics (`paused_for_approval`, `completed`,
+`no_pii_leak`) run offline with no keys, and an LLM-as-judge `correctness` metric
+kicks in with a real model:
+
+```bash
+cd backend
+python -m evals.run_evals               # prints a scored table (offline OK)
+python -m evals.run_evals --langsmith   # tracked experiment (needs LANGSMITH_API_KEY)
+```
+
+See **[docs/EVALUATION.md](docs/EVALUATION.md)** to add your own examples and
+evaluators, or gate CI on `paused_for_approval == 1.0`.
+
 ## 📁 Project structure
 
 ```
@@ -378,6 +396,7 @@ langgraph-interrupt-workflow-template/
 │   ├── memory.py              # Cross-thread long-term memory (Store, semantic-ready)
 │   ├── llm.py                 # Provider-agnostic LLM factory + offline mock model
 │   ├── tools.py               # Example web_search tool (Tavily / mock)
+│   ├── evals/                 # Evaluation harness (dataset + evaluators + runner)
 │   ├── test_main.py           # Pytest suite
 │   ├── requirements.txt
 │   └── .env.example

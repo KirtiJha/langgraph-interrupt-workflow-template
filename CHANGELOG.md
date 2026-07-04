@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Evaluation harness** (`backend/evals/`): scores the agent on answer quality
+  *and* human-in-the-loop behaviour. Deterministic evaluators — `paused_for_approval`
+  (did it interrupt for approval before running its tool?), `completed`, and
+  `no_pii_leak` — run offline with the mock model; an LLM-as-judge `correctness`
+  metric runs with a real model. Prints a scored table locally or logs a tracked
+  experiment to LangSmith (`python -m evals.run_evals [--langsmith]`). Docs in
+  `docs/EVALUATION.md`.
 - **Deep Agent engine** (`backend/deep_agent.py`): a third selectable engine built
   on `deepagents` that **plans** (a `write_todos` to-do list), **delegates** to
   `researcher` + `critic` **subagents** via a `task` tool, and uses a virtual
