@@ -28,3 +28,7 @@ langchain-openai>=1.2,<2
 # --- Optional tools ---
 # langchain-tavily>=0.2         # live web search (set TAVILY_API_KEY)
 # langchain-mcp-adapters>=0.1   # load tools from MCP servers (set MCP_SERVERS)
+
+# --- Evaluation (backend/evals) ---
+# Pulled in transitively by langchain; pinned here for the eval harness.
+langsmith>=0.9,<1
