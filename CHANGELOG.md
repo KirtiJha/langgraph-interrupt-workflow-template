@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Live tool progress**: the `web_search` tool now streams "🔎 Searching…" /
+  "📄 Found N sources" progress via `get_stream_writer`, so the previously silent
+  post-approval tool run shows activity in both the agent and workflow engines
+  (flows through the existing `stream_mode="custom"` path — no UI changes).
 - **Demo GIF** in the README (`docs/demo.gif`) showing the human-in-the-loop
   flow: ask → generative approval card → per-field edit → approve → streamed
   answer. Reproducible via `scripts/record_demo.py` (Playwright + Pillow), which

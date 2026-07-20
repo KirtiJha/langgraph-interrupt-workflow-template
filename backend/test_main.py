@@ -199,6 +199,9 @@ def test_agent_approve_completes(client):
     state = next(e for e in resumed if e["type"] == "state")
     assert state["requires_input"] is False
     assert state["final_response"]
+    # The web_search tool streams live progress once approved (get_stream_writer).
+    progress = [e.get("message", "") for e in resumed if e.get("type") == "progress"]
+    assert any("Searching the web" in m for m in progress)
 
 
 def test_agent_edit_tool_args(client):
