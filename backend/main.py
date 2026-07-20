@@ -35,6 +35,7 @@ from agent import (
     stream_agent_response,
     structured_output_enabled,
 )
+from agui import AGUI_AVAILABLE, AGUI_PATH, mount_agui
 from approval_workflow import build_approval_graph
 from graph import build_research_graph, resilience_config, stream_research_response
 from guardrails import GuardrailMiddleware
@@ -81,6 +82,7 @@ def _capabilities(store, mcp_tools) -> dict:
         },
         "middleware": agent_middleware_summary(),
         "resilience": resilience_config(),
+        "agui": {"enabled": AGUI_AVAILABLE, "path": AGUI_PATH if AGUI_AVAILABLE else None},
         "deep_agent": {
             "installed": DEEP_AGENT_ENABLED,
             "available": deep_agent_available(),
@@ -136,6 +138,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LangGraph Interrupt Workflow Template", lifespan=lifespan)
+
+# Expose the agent over the AG-UI protocol at /agui (no-op if not installed), so
+# any AG-UI client (e.g. CopilotKit) can drive it — including the approval pause.
+mount_agui(app)
 
 _allowed_origins = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(

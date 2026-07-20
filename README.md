@@ -62,6 +62,8 @@ All three share the same provider-agnostic LLM, `web_search` tool, and long-term
 - **🔭 LangGraph Studio ready** — `langgraph.json` registers all graphs for `langgraph dev`.
 - **🎨 Modern UI** — Next.js 15 + React 19 chat interface with live progress and a rewind panel.
 - **📊 Evaluation harness** — score the agent on answer **correctness** *and* whether it **paused for approval** (`backend/evals`), offline or as a tracked LangSmith experiment.
+- **🔌 AG-UI protocol** — the agent is exposed at `/agui` over the open [AG-UI](https://docs.ag-ui.com) protocol, so it plugs into any AG-UI client (e.g. **CopilotKit**) — human approval included — without touching the bundled UI.
+- **🃏 Generative approval card** — the tool-approval interrupt renders as a structured card: per-field argument editing and **approve / edit / reject / answer** actions.
 - **✅ Tested & CI'd** — pytest suite + GitHub Actions for backend and frontend.
 
 ## 🏗️ Architecture
@@ -289,6 +291,24 @@ langgraph dev          # opens LangGraph Studio with the research, approval, age
 
 `langgraph.json` registers all four graphs so you can step through interrupts visually.
 
+## 🔌 Connect any AG-UI client (CopilotKit, …)
+
+Beyond the bundled Next.js UI, the agent is also exposed over the open
+**[AG-UI protocol](https://docs.ag-ui.com)** at **`/agui`** (via
+[`ag-ui-langgraph`](https://pypi.org/project/ag-ui-langgraph/)). AG-UI is a
+standard for streaming agent events to a frontend — and *pausing for human
+approval* is one of its first-class events, so any AG-UI client drives this
+agent's interrupt/resume flow out of the box:
+
+```ts
+// e.g. with CopilotKit / any AG-UI React client
+new HttpAgent({ url: "http://localhost:8000/agui" })
+```
+
+It's additive and optional — the bundled UI keeps using the `/agent/*` SSE
+endpoints, and if `ag-ui-langgraph` isn't installed the app still boots (the
+`/agui` endpoint is simply not mounted). Check `GET /capabilities → agui`.
+
 ## 📡 API reference
 
 | Endpoint | Method | Description |
@@ -304,6 +324,7 @@ langgraph dev          # opens LangGraph Studio with the research, approval, age
 | `/agent/decide` | POST | Resume the agent with `approve`/`edit`/`reject`/`respond` (SSE) |
 | `/deep/start` | POST | Start/continue the Deep Agent engine (planning + subagents, SSE) |
 | `/deep/decide` | POST | Resume the Deep Agent with a tool-approval decision (SSE) |
+| `/agui` | POST | AG-UI protocol endpoint — drive the agent from any AG-UI client |
 | `/approval/start` | POST | Draft content for a task and pause for review |
 | `/approval/decide` | POST | Resume with `approve` / `edit` / `reject` |
 | `/capabilities` | GET | Which optional features are active (guardrails, MCP tools, structured output, semantic memory) — drives the UI status strip |
@@ -390,6 +411,7 @@ langgraph-interrupt-workflow-template/
 │   ├── approval_workflow.py   # Approve / edit / reject workflow
 │   ├── agent.py               # create_agent + HITL + guardrails + structured output
 │   ├── deep_agent.py          # Deep Agent engine (planning + researcher/critic subagents)
+│   ├── agui.py                # AG-UI protocol adapter (mounts /agui)
 │   ├── guardrails.py          # PII-redaction / blocklist middleware
 │   ├── middleware_pack.py     # Prebuilt middleware (summarization, limits, retry, todos)
 │   ├── mcp_tools.py           # Optional Model Context Protocol tool loader

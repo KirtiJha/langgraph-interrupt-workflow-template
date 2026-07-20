@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **AG-UI protocol adapter** (`backend/agui.py`): the agent is exposed at `/agui`
+  over the open [AG-UI](https://docs.ag-ui.com) protocol via `ag-ui-langgraph`, so
+  any AG-UI client (e.g. CopilotKit) can drive it — human-approval pause included.
+  Additive and optional: the bundled UI keeps using `/agent/*`, and the app still
+  boots if `ag-ui-langgraph` is absent (endpoint just not mounted). Reported in
+  `/capabilities` and shown as a header badge.
+- **Generative approval card** (frontend): the agent tool-approval interrupt now
+  renders as a structured card — arguments as an editable per-field form
+  (generated from the tool call) plus **approve / edit / reject / answer**
+  (`respond`) actions.
 - **Evaluation harness** (`backend/evals/`): scores the agent on answer quality
   *and* human-in-the-loop behaviour. Deterministic evaluators — `paused_for_approval`
   (did it interrupt for approval before running its tool?), `completed`, and
