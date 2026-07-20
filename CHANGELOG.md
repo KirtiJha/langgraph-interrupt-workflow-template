@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Content-block responses** from newer models (e.g. Gemini 3.x, Claude with
+  thinking) return `message.content` as a list of typed blocks rather than a
+  string. Added `llm.text_of()` and applied it wherever a response was treated
+  as text (workflow nodes, approval drafter, and both engines' token streaming +
+  final answer), so the template works with these models instead of crashing on
+  `content.split(...)` or rendering `[object Object]` in the UI.
+
 ### Added
 - **Live tool progress**: the `web_search` tool now streams "🔎 Searching…" /
   "📄 Found N sources" progress via `get_stream_writer`, so the previously silent

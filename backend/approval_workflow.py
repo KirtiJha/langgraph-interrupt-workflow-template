@@ -21,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
 
-from llm import get_llm
+from llm import get_llm, text_of
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ async def drafter(state: ApprovalState) -> Dict[str, Any]:
     response = await llm.ainvoke(
         [SystemMessage(content=system), HumanMessage(content=human)]
     )
-    return {"draft": response.content, "status": "awaiting_review"}
+    return {"draft": text_of(response.content), "status": "awaiting_review"}
 
 
 async def human_review(state: ApprovalState) -> Dict[str, Any]:
