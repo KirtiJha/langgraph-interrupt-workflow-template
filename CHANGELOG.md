@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Demo GIF** in the README (`docs/demo.gif`) showing the human-in-the-loop
+  flow: ask → generative approval card → per-field edit → approve → streamed
+  answer. Reproducible via `scripts/record_demo.py` (Playwright + Pillow), which
+  captures the running app — re-run it with a real model for nicer content.
 - **CopilotKit example** (`examples/copilotkit/`): a standalone, runnable
   Next.js app that drives the agent from a CopilotKit chat over the AG-UI
   protocol (`/api/copilotkit` runtime → `HttpAgent` → backend `/agui`). Its own
