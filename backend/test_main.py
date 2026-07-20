@@ -124,6 +124,15 @@ def test_stream_resume_emits_progress(client):
     assert state_evt["requires_input"] is True  # paused at the direction interrupt
 
 
+def test_research_subquery_cap(client, monkeypatch):
+    """RESEARCH_MAX_SUBQUERIES caps parallel sub-researchers (rate-limit friendly)."""
+    monkeypatch.setenv("RESEARCH_MAX_SUBQUERIES", "1")
+    thread_id = client.post("/start", json={"message": "cap test"}).json()["thread_id"]
+    events = _sse(client, "POST", "/stream", json={"thread_id": thread_id, "choice": "proceed"})
+    state = next(e for e in events if e.get("type") == "state")
+    assert len(state["sub_queries"]) == 1  # would be 4 without the cap
+
+
 # --- Feature B: cross-thread long-term memory -------------------------------
 def test_cross_session_memory(client):
     user = "memory-user"
