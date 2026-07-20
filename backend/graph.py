@@ -23,7 +23,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import Command, RetryPolicy, Send, interrupt
 
-from llm import get_llm
+from llm import get_llm, text_of
 from memory import get_active_store, load_user_memory, save_user_memory
 from tools import web_search
 
@@ -113,7 +113,7 @@ def _previous_exchange(messages: List[AnyMessage]) -> tuple[str, str]:
     ai_messages = [m for m in messages if isinstance(m, AIMessage)]
     previous_query = user_messages[-2].content if len(user_messages) > 1 else ""
     previous_response = ai_messages[-1].content if ai_messages else ""
-    return str(previous_query), str(previous_response)
+    return text_of(previous_query), text_of(previous_response)
 
 
 # --- Node 1: Research planning (interrupt) ---------------------------------
@@ -211,7 +211,7 @@ async def query_planner(
             HumanMessage(content=f"Question: {state['user_query']}{mem_section}"),
         ]
     )
-    lines = [ln.strip(" -•\t") for ln in response.content.split("\n") if ln.strip()]
+    lines = [ln.strip(" -•\t") for ln in text_of(response.content).split("\n") if ln.strip()]
     sub_queries = lines[:n] or [state["user_query"]]
     while len(sub_queries) < min(n, 2):  # ensure at least a couple of workers
         sub_queries.append(f"{state['user_query']} (aspect {len(sub_queries) + 1})")
@@ -272,7 +272,7 @@ async def sub_researcher(state: SubResearchState) -> Dict[str, Any]:
             HumanMessage(content=f"Sub-question: {sub}\nReference:\n{search_context}"),
         ]
     )
-    finding = f"[{sub}] {response.content.strip()}"
+    finding = f"[{sub}] {text_of(response.content).strip()}"
 
     _emit(
         {
@@ -364,7 +364,7 @@ async def deep_analyzer(state: ResearchState) -> Dict[str, Any]:
     response = await llm.ainvoke(
         [SystemMessage(content=system_prompt), HumanMessage(content=content)]
     )
-    return {"analysis": response.content, "current_step": "format_selection"}
+    return {"analysis": text_of(response.content), "current_step": "format_selection"}
 
 
 # --- Node 5: Format selection (interrupt) -----------------------------------
@@ -452,7 +452,7 @@ async def response_generator(state: ResearchState) -> Dict[str, Any]:
     response = await llm.ainvoke(
         [SystemMessage(content=system_prompt), HumanMessage(content=context)]
     )
-    final_response = response.content
+    final_response = text_of(response.content)
 
     return {
         "messages": [AIMessage(content=final_response)],
@@ -607,12 +607,11 @@ async def stream_research_response(
                 yield event
             elif mode == "messages":
                 chunk, meta = data
-                if meta.get("langgraph_node") in STREAMING_NODES and getattr(
-                    chunk, "content", None
-                ):
+                token = text_of(getattr(chunk, "content", None))
+                if meta.get("langgraph_node") in STREAMING_NODES and token:
                     yield {
                         "type": "content",
-                        "content": chunk.content,
+                        "content": token,
                         "done": False,
                         "node": meta.get("langgraph_node"),
                     }

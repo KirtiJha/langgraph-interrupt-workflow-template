@@ -27,7 +27,7 @@ from langchain.agents.middleware import HumanInTheLoopMiddleware
 from pydantic import BaseModel, Field
 
 from guardrails import GuardrailMiddleware
-from llm import get_llm
+from llm import get_llm, text_of
 from middleware_pack import build_middleware_pack
 from tools import web_search
 
@@ -183,16 +183,16 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
                     yield {"type": "progress", "message": "🔧 Tool executed — synthesizing…"}
             elif mode == "messages":
                 chunk, _meta = data
-                content = getattr(chunk, "content", None)
-                if content and isinstance(content, str):
-                    yield {"type": "content", "content": content, "done": False}
+                token = text_of(getattr(chunk, "content", None))
+                if token:
+                    yield {"type": "content", "content": token, "done": False}
 
         state = await graph.aget_state(config)
         values = state.values or {}
         messages = values.get("messages", [])
         final = ""
         if messages and not state.next:
-            final = getattr(messages[-1], "content", "") or ""
+            final = text_of(getattr(messages[-1], "content", "")) or ""
 
         event = {
             "type": "state",

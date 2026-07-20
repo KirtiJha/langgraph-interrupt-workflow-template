@@ -50,6 +50,33 @@ def _truthy(value: Optional[str]) -> bool:
     return (value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def text_of(content: Any) -> str:
+    """Normalize a message's ``content`` to plain text.
+
+    Newer models (e.g. Gemini 3.x, Claude with thinking) return ``content`` as a
+    list of typed blocks rather than a string. This flattens either form to the
+    concatenated text, so provider-agnostic code can treat every response the
+    same way.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                # Only surface text blocks (skip thinking/tool-use/etc).
+                if block.get("type", "text") == "text":
+                    parts.append(str(block.get("text", "")))
+            else:
+                parts.append(str(getattr(block, "text", "")))
+        return "".join(parts)
+    return str(content)
+
+
 def _has_tool_result(messages: List[BaseMessage]) -> bool:
     return any(getattr(m, "type", None) == "tool" for m in messages)
 

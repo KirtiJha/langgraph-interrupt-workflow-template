@@ -27,6 +27,22 @@ def test_health(client):
     assert response.json()["status"] == "ok"
 
 
+def test_text_of_normalizes_block_content():
+    """Newer models (Gemini 3.x, Claude thinking) return content as blocks."""
+    from llm import text_of
+
+    assert text_of("plain string") == "plain string"
+    assert text_of(None) == ""
+    # Gemini-style content blocks -> flattened text (non-text blocks dropped).
+    blocks = [
+        {"type": "text", "text": "Hello "},
+        {"type": "thinking", "thinking": "ignore me"},
+        {"type": "text", "text": "world"},
+    ]
+    assert text_of(blocks) == "Hello world"
+    assert text_of(["a", "b"]) == "ab"
+
+
 def test_capabilities_reports_active_features(client):
     caps = client.get("/capabilities").json()
     # Offline defaults: mock model, guardrails on, no MCP, no semantic memory.
