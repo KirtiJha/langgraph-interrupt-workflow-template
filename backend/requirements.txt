@@ -11,6 +11,10 @@ aiosqlite>=0.20
 # with the Deep Agent engine disabled.
 deepagents>=0.6,<1
 
+# AG-UI protocol adapter — exposes the agent to any AG-UI client (CopilotKit,
+# etc.) at /agui. Optional — the app boots without it (endpoint just not mounted).
+ag-ui-langgraph>=0.0.40
+
 # API server
 fastapi>=0.115,<1
 uvicorn[standard]>=0.32,<1

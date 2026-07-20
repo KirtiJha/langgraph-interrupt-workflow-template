@@ -386,5 +386,43 @@ def test_deep_start_streams_and_completes(client):
     assert state["final_response"]
 
 
+# --- AG-UI protocol adapter -------------------------------------------------
+def test_agui_capability_and_endpoint(client):
+    caps = client.get("/capabilities").json()
+    assert "agui" in caps
+    if caps["agui"]["enabled"]:
+        # Endpoint is mounted and healthy; GET on the run path is 405 (POST-only).
+        assert client.get(caps["agui"]["path"] + "/health").status_code == 200
+        assert client.get(caps["agui"]["path"]).status_code == 405
+
+
+def test_agui_graceful_without_package(monkeypatch):
+    """The app boots and legacy endpoints work even if ag-ui-langgraph is absent."""
+    import builtins
+    import importlib
+    import sys
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name.startswith("ag_ui"):
+            raise ImportError("simulated missing ag-ui-langgraph")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    for mod in ("agui", "main"):
+        sys.modules.pop(mod, None)
+    agui = importlib.import_module("agui")
+    assert agui.AGUI_AVAILABLE is False
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    assert agui.mount_agui(app) is False  # no-op, no crash
+
+    # Restore for the rest of the session.
+    for mod in ("agui", "main"):
+        sys.modules.pop(mod, None)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

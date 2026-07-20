@@ -100,8 +100,11 @@ export default function ChatInterface() {
   // Agent tool-approval editor state (lifted out of the card component).
   const [agentEditing, setAgentEditing] = useState(false);
   const [agentRejecting, setAgentRejecting] = useState(false);
+  const [agentResponding, setAgentResponding] = useState(false);
   const [agentArgsText, setAgentArgsText] = useState("");
+  const [agentArgs, setAgentArgs] = useState<Record<string, string>>({});
   const [agentFeedback, setAgentFeedback] = useState("");
+  const [agentResponse, setAgentResponse] = useState("");
   // Guardrail signals (PII redaction / blocklist) emitted by the agent engine.
   const [guardrailNotice, setGuardrailNotice] = useState<{
     action: string;
@@ -453,9 +456,19 @@ export default function ChatInterface() {
             // Reset the approval editor for the new tool request.
             setAgentEditing(false);
             setAgentRejecting(false);
+            setAgentResponding(false);
             setAgentFeedback("");
-            setAgentArgsText(
-              JSON.stringify(data.tool_requests[0]?.args ?? {}, null, 2)
+            setAgentResponse("");
+            const nextArgs = data.tool_requests[0]?.args ?? {};
+            setAgentArgsText(JSON.stringify(nextArgs, null, 2));
+            // Structured per-field editing (generative form) for flat args.
+            setAgentArgs(
+              Object.fromEntries(
+                Object.entries(nextArgs).map(([k, v]) => [
+                  k,
+                  typeof v === "object" ? JSON.stringify(v) : String(v),
+                ])
+              )
             );
             setInterruptData({
               type: "agent_tool_approval",
@@ -628,12 +641,29 @@ export default function ChatInterface() {
     const allowed: string[] = interruptData?.agent?.allowed || [];
     if (!req) return null;
 
-    const submitEdit = () => {
-      let parsed: any = {};
+    const argEntries = Object.entries(req.args ?? {});
+    // Per-field editing works when every arg is a primitive ("flat").
+    const flat = argEntries.every(([, v]) => typeof v !== "object" || v === null);
+    const coerce = (s: string): any => {
       try {
-        parsed = JSON.parse(agentArgsText);
+        return JSON.parse(s);
       } catch {
-        parsed = req.args;
+        return s;
+      }
+    };
+
+    const submitEdit = () => {
+      let parsed: any;
+      if (flat) {
+        parsed = Object.fromEntries(
+          Object.entries(agentArgs).map(([k, v]) => [k, coerce(v)])
+        );
+      } else {
+        try {
+          parsed = JSON.parse(agentArgsText);
+        } catch {
+          parsed = req.args;
+        }
       }
       addMessage("choice", `Edited & approved ${req.name}`, "agent");
       agentDecide([
@@ -641,38 +671,75 @@ export default function ChatInterface() {
       ]);
     };
 
+    const mode = agentEditing
+      ? "edit"
+      : agentRejecting
+      ? "reject"
+      : agentResponding
+      ? "respond"
+      : "view";
+
     return (
       <div className="interrupt-card animate-slide-up border-purple-200 from-purple-50 to-indigo-50">
-        <div className="flex items-center space-x-2 mb-3">
-          <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center">
-            <Settings className="w-4 h-4 text-white" />
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center">
+              <Settings className="w-4 h-4 text-white" />
+            </div>
+            <h3 className="font-semibold text-purple-900 text-sm">
+              Human approval required
+            </h3>
           </div>
-          <h3 className="font-semibold text-purple-900 text-sm">
-            Tool approval required
-          </h3>
-        </div>
-        <p className="text-sm text-purple-900 mb-2">
-          The agent wants to call{" "}
-          <code className="bg-purple-100 px-1.5 py-0.5 rounded text-purple-800">
-            {req.name}
+          <code className="text-[11px] font-semibold bg-purple-100 text-purple-800 rounded-full px-2 py-0.5">
+            {req.name}()
           </code>
-          :
-        </p>
+        </div>
 
-        {agentEditing ? (
-          <textarea
-            value={agentArgsText}
-            onChange={(e) => setAgentArgsText(e.target.value)}
-            rows={4}
-            className="w-full font-mono text-xs rounded-lg border border-purple-200 px-3 py-2 mb-2 focus:outline-none focus:ring-2 focus:ring-purple-300"
-          />
-        ) : (
-          <pre className="bg-white/70 border border-purple-100 rounded-lg p-3 text-xs text-gray-700 overflow-x-auto mb-2">
-            {JSON.stringify(req.args, null, 2)}
-          </pre>
-        )}
+        {/* Structured argument view / editor (generated from the tool call) */}
+        <div className="rounded-lg border border-purple-100 bg-white/70 divide-y divide-purple-50 mb-3 overflow-hidden">
+          {argEntries.length === 0 && (
+            <div className="px-3 py-2 text-xs text-gray-400">(no arguments)</div>
+          )}
+          {flat
+            ? argEntries.map(([key]) => (
+                <div
+                  key={key}
+                  className="grid grid-cols-3 gap-2 items-center px-3 py-2"
+                >
+                  <span className="text-xs font-medium text-gray-500 truncate">
+                    {key}
+                  </span>
+                  {mode === "edit" ? (
+                    <input
+                      value={agentArgs[key] ?? ""}
+                      onChange={(e) =>
+                        setAgentArgs((p) => ({ ...p, [key]: e.target.value }))
+                      }
+                      className="col-span-2 text-xs font-mono rounded-md border border-purple-200 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-300"
+                    />
+                  ) : (
+                    <span className="col-span-2 text-xs font-mono text-gray-800 break-words">
+                      {agentArgs[key]}
+                    </span>
+                  )}
+                </div>
+              ))
+            : mode === "edit" && (
+                <textarea
+                  value={agentArgsText}
+                  onChange={(e) => setAgentArgsText(e.target.value)}
+                  rows={4}
+                  className="w-full font-mono text-xs px-3 py-2 focus:outline-none"
+                />
+              )}
+          {!flat && mode !== "edit" && (
+            <pre className="text-xs text-gray-700 overflow-x-auto px-3 py-2">
+              {JSON.stringify(req.args, null, 2)}
+            </pre>
+          )}
+        </div>
 
-        {agentRejecting && (
+        {mode === "reject" && (
           <textarea
             value={agentFeedback}
             onChange={(e) => setAgentFeedback(e.target.value)}
@@ -682,8 +749,18 @@ export default function ChatInterface() {
           />
         )}
 
+        {mode === "respond" && (
+          <textarea
+            value={agentResponse}
+            onChange={(e) => setAgentResponse(e.target.value)}
+            rows={2}
+            placeholder="Answer on the tool's behalf — the agent uses this instead of running it"
+            className="w-full text-xs rounded-lg border border-sky-200 px-3 py-2 mb-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
+          />
+        )}
+
         <div className="flex flex-wrap gap-2">
-          {agentEditing ? (
+          {mode === "edit" && (
             <>
               <button
                 onClick={submitEdit}
@@ -698,7 +775,8 @@ export default function ChatInterface() {
                 Cancel
               </button>
             </>
-          ) : agentRejecting ? (
+          )}
+          {mode === "reject" && (
             <>
               <button
                 onClick={() => {
@@ -716,7 +794,27 @@ export default function ChatInterface() {
                 Cancel
               </button>
             </>
-          ) : (
+          )}
+          {mode === "respond" && (
+            <>
+              <button
+                onClick={() => {
+                  addMessage("choice", `Answered ${req.name} directly`, "agent");
+                  agentDecide([{ type: "respond", message: agentResponse }]);
+                }}
+                className="bg-sky-600 hover:bg-sky-700 text-white rounded-lg px-3 py-1.5 text-sm font-medium"
+              >
+                Send answer
+              </button>
+              <button
+                onClick={() => setAgentResponding(false)}
+                className="text-sm text-gray-500 hover:text-gray-800 px-2"
+              >
+                Cancel
+              </button>
+            </>
+          )}
+          {mode === "view" && (
             <>
               {allowed.includes("approve") && (
                 <button
@@ -735,6 +833,14 @@ export default function ChatInterface() {
                   className="bg-white border border-purple-200 hover:bg-purple-50 text-purple-800 rounded-lg px-4 py-1.5 text-sm font-medium"
                 >
                   ✎ Edit
+                </button>
+              )}
+              {allowed.includes("respond") && (
+                <button
+                  onClick={() => setAgentResponding(true)}
+                  className="bg-white border border-sky-200 hover:bg-sky-50 text-sky-700 rounded-lg px-4 py-1.5 text-sm font-medium"
+                >
+                  ↩ Answer
                 </button>
               )}
               {allowed.includes("reject") && (
@@ -1042,6 +1148,16 @@ export default function ChatInterface() {
               >
                 <Brain className="w-3 h-3" />
                 Deep Agent{capabilities.deep_agent.available ? "" : " (needs model)"}
+              </span>
+            )}
+
+            {capabilities.agui?.enabled && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-fuchsia-50 border-fuchsia-200 text-fuchsia-700"
+                title={`AG-UI protocol endpoint at ${capabilities.agui.path} — connect any AG-UI client (e.g. CopilotKit)`}
+              >
+                <Layers className="w-3 h-3" />
+                AG-UI
               </span>
             )}
           </div>
