@@ -309,6 +309,11 @@ It's additive and optional — the bundled UI keeps using the `/agent/*` SSE
 endpoints, and if `ag-ui-langgraph` isn't installed the app still boots (the
 `/agui` endpoint is simply not mounted). Check `GET /capabilities → agui`.
 
+👉 **Runnable example:** [`examples/copilotkit`](examples/copilotkit) is a
+minimal CopilotKit chat wired to `/agui` — start the backend, then
+`cd examples/copilotkit && npm install && npm run dev`. It's standalone (its own
+`package.json`), so it doesn't affect the main `frontend/` build.
+
 ## 📡 API reference
 
 | Endpoint | Method | Description |

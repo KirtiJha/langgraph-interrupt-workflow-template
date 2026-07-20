@@ -1,0 +1,25 @@
+{
+  "name": "copilotkit-agui-example",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Drive the template's human-in-the-loop agent from a CopilotKit chat via the AG-UI protocol (/agui).",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001"
+  },
+  "dependencies": {
+    "@ag-ui/client": "^0.0.57",
+    "@copilotkit/react-core": "^1.63.1",
+    "@copilotkit/react-ui": "^1.63.1",
+    "@copilotkit/runtime": "^1.63.1",
+    "next": "^15.5.20",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.2.17",
+    "typescript": "^5.9.3"
+  }
+}

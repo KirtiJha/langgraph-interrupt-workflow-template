@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **CopilotKit example** (`examples/copilotkit/`): a standalone, runnable
+  Next.js app that drives the agent from a CopilotKit chat over the AG-UI
+  protocol (`/api/copilotkit` runtime → `HttpAgent` → backend `/agui`). Its own
+  `package.json`, so it doesn't touch the main `frontend/` build.
 - **AG-UI protocol adapter** (`backend/agui.py`): the agent is exposed at `/agui`
   over the open [AG-UI](https://docs.ag-ui.com) protocol via `ag-ui-langgraph`, so
   any AG-UI client (e.g. CopilotKit) can drive it — human-approval pause included.
