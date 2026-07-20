@@ -11,8 +11,9 @@
 ⚡ A **production-ready, provider-agnostic template** for building **human-in-the-loop AI workflows** with **LangGraph v1**. Pause an agent mid-execution, ask a human to approve / edit / redirect, then resume exactly where it left off — with a polished Next.js chat UI on top.
 
 <p align="center">
-  <img src="docs/demo.gif" alt="The agent pauses for human approval before running a tool — approve, edit the arguments, answer, or reject — then streams the answer." width="100%">
+  <img src="docs/demo.gif" alt="End-to-end tour: the Agent engine pauses for approval on a tool call (approve / edit args / answer / reject) and streams a real answer; the Workflow engine runs multi-step human-in-the-loop research in parallel; and time travel rewinds to any earlier step." width="100%">
 </p>
+<p align="center"><sub>End-to-end tour on a real model (Gemini): agent tool-approval → workflow multi-step HITL + parallel research → time travel.</sub></p>
 
 > **Runs with zero configuration.** Clone it and go — a built-in mock model lets you explore the full interrupt flow without any API keys. Add a provider when you're ready.
 

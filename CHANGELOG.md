@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`RESEARCH_MAX_SUBQUERIES`** — caps the number of parallel sub-researchers in
+  the Workflow engine. The workflow makes one concurrent LLM call per
+  sub-question, so on a rate-limited key (e.g. a free tier) setting this to 1-2
+  avoids bursting past requests-per-minute limits.
+
+### Changed
+- The README demo GIF is now an **end-to-end tour on a real model** (Gemini):
+  agent tool-approval (approve / edit / answer / reject) → Workflow multi-step
+  human-in-the-loop with parallel research → time travel. Regenerate any time
+  with `scripts/record_demo.py`.
+
 ### Fixed
 - **Content-block responses** from newer models (e.g. Gemini 3.x, Claude with
   thinking) return `message.content` as a list of typed blocks rather than a

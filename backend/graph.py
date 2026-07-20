@@ -62,6 +62,23 @@ def resilience_config() -> dict:
 SUBQUERY_COUNT = {"simplified": 2, "focused": 2, "continue_context": 3, "proceed": 4}
 
 
+def _max_subqueries() -> Optional[int]:
+    """Optional cap on parallel sub-researchers (``RESEARCH_MAX_SUBQUERIES``).
+
+    The workflow fans out one concurrent LLM call per sub-question. On a
+    rate-limited key (e.g. a free tier), set this to 1-2 to avoid bursting past
+    the provider's requests-per-minute / concurrency limits. Unset = no cap.
+    """
+    raw = os.getenv("RESEARCH_MAX_SUBQUERIES", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+        return value if value >= 1 else None
+    except ValueError:
+        return None
+
+
 def reset_or_append(existing: List[str], new: List[str]) -> List[str]:
     """Reducer: an empty write resets the list; otherwise append.
 
@@ -196,6 +213,9 @@ async def query_planner(
         return Command(goto="handle_cancel")
 
     n = SUBQUERY_COUNT.get(user_choice, 4)
+    cap = _max_subqueries()
+    if cap is not None:
+        n = min(n, cap)
     memory = state.get("user_memory") or ""
     mem_section = f"\n\nWhat we already know about this user:\n{memory}" if memory else ""
 
