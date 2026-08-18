@@ -283,6 +283,30 @@ RETRY_MAX_ATTEMPTS=3
 NODE_TIMEOUT_SECONDS=30          # per-node wall-clock cap (empty = off)
 ```
 
+**Graceful cancel (LangGraph 1.2).** The **Stop** button doesn't kill the
+process — it asks the run to *drain*. The run finishes its current superstep,
+**checkpoints its progress**, and raises `GraphDrained`, so state is never left
+half-written and the thread stays **resumable**:
+
+```python
+control = RunControl()                       # one per run
+graph.astream(..., control=control)          # POST /cancel drains it
+control.request_drain("cancelled by user")   # stops at the next safe boundary
+```
+
+The stream then emits a `cancelled` event and a closing state with
+`resumable: true`. Works across all three engines.
+
+**Rate-limit friendly.** This template can issue several LLM calls at once (the
+workflow fans out one per sub-question), which trips the 429 limits on free/low
+tiers — where the provider SDK's own retries then stall the run. Two caps fix
+that:
+
+```env
+LLM_REQUESTS_PER_SECOND=0.5      # client-side request cap (all providers)
+RESEARCH_MAX_SUBQUERIES=2        # fewer parallel sub-researchers
+```
+
 The active feature set is reported by `GET /capabilities` and shown as a status
 strip in the chat header.
 
@@ -427,6 +451,7 @@ langgraph-interrupt-workflow-template/
 │   ├── agent.py               # create_agent + HITL + guardrails + structured output
 │   ├── deep_agent.py          # Deep Agent engine (planning + researcher/critic subagents)
 │   ├── agui.py                # AG-UI protocol adapter (mounts /agui)
+│   ├── run_control.py         # Graceful cancel (cooperative drain) for in-flight runs
 │   ├── guardrails.py          # PII-redaction / blocklist middleware
 │   ├── middleware_pack.py     # Prebuilt middleware (summarization, limits, retry, todos)
 │   ├── mcp_tools.py           # Optional Model Context Protocol tool loader
