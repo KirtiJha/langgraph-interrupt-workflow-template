@@ -59,6 +59,8 @@ All three share the same provider-agnostic LLM, `web_search` tool, and long-term
 - **🧠 Deep Agent engine** — a third engine (`deepagents`) that **plans**, spawns **researcher + critic subagents**, and uses a virtual filesystem — with the same tool-approval HITL.
 - **🧱 Middleware power-pack** — prebuilt **summarization**, **call/tool-call limits**, **model retry**, **fallback**, and a **TodoList planner**, composed with the custom guardrail + HITL middleware.
 - **♻️ Resilient workflow (LangGraph 1.2)** — per-node **retries**, **timeouts**, and **compensation** (`error_handler`) so failures degrade gracefully instead of 500ing.
+- **🛑 Graceful cancel** — a **Stop** button that drains the run at a safe boundary: it finishes the current step, **checkpoints**, and stays **resumable** — no corrupted state.
+- **🚦 Rate-limit friendly** — a client-side request cap plus a parallelism cap, so free/low-tier provider keys don't get throttled into 429 stalls.
 - **🔌 Provider-agnostic** — OpenAI, Anthropic, Google, Groq, Mistral, IBM watsonx, Ollama… via LangChain's `init_chat_model`. One env var to switch.
 - **🆓 Zero-config demo** — a streaming-capable mock model runs the whole app with **no API keys**.
 - **💾 Durable execution** — optional `AsyncSqliteSaver` checkpointer; workflows survive server restarts.
@@ -281,6 +283,30 @@ RETRY_MAX_ATTEMPTS=3
 NODE_TIMEOUT_SECONDS=30          # per-node wall-clock cap (empty = off)
 ```
 
+**Graceful cancel (LangGraph 1.2).** The **Stop** button doesn't kill the
+process — it asks the run to *drain*. The run finishes its current superstep,
+**checkpoints its progress**, and raises `GraphDrained`, so state is never left
+half-written and the thread stays **resumable**:
+
+```python
+control = RunControl()                       # one per run
+graph.astream(..., control=control)          # POST /cancel drains it
+control.request_drain("cancelled by user")   # stops at the next safe boundary
+```
+
+The stream then emits a `cancelled` event and a closing state with
+`resumable: true`. Works across all three engines.
+
+**Rate-limit friendly.** This template can issue several LLM calls at once (the
+workflow fans out one per sub-question), which trips the 429 limits on free/low
+tiers — where the provider SDK's own retries then stall the run. Two caps fix
+that:
+
+```env
+LLM_REQUESTS_PER_SECOND=0.5      # client-side request cap (all providers)
+RESEARCH_MAX_SUBQUERIES=2        # fewer parallel sub-researchers
+```
+
 The active feature set is reported by `GET /capabilities` and shown as a status
 strip in the chat header.
 
@@ -335,6 +361,7 @@ minimal CopilotKit chat wired to `/agui` — start the backend, then
 | `/deep/start` | POST | Start/continue the Deep Agent engine (planning + subagents, SSE) |
 | `/deep/decide` | POST | Resume the Deep Agent with a tool-approval decision (SSE) |
 | `/agui` | POST | AG-UI protocol endpoint — drive the agent from any AG-UI client |
+| `/cancel` | POST | Gracefully stop an in-flight run — progress is checkpointed and resumable |
 | `/approval/start` | POST | Draft content for a task and pause for review |
 | `/approval/decide` | POST | Resume with `approve` / `edit` / `reject` |
 | `/capabilities` | GET | Which optional features are active (guardrails, MCP tools, structured output, semantic memory) — drives the UI status strip |
@@ -362,6 +389,8 @@ All configuration is via environment variables (see [`backend/.env.example`](bac
 | `AGENT_FALLBACK_MODEL` | Fall back to this model on failure | – |
 | `RETRY_MAX_ATTEMPTS` | Per-node retry attempts in the workflow | `3` |
 | `NODE_TIMEOUT_SECONDS` | Per-node wall-clock timeout | off |
+| `LLM_REQUESTS_PER_SECOND` | Client-side request cap (smooths bursts on rate-limited keys) | off |
+| `RESEARCH_MAX_SUBQUERIES` | Cap parallel sub-researchers in the workflow | unclamped |
 | `CORS_ORIGINS` | Comma-separated allowed origins | `*` |
 | `PORT` | Backend port | `8000` |
 
@@ -422,6 +451,7 @@ langgraph-interrupt-workflow-template/
 │   ├── agent.py               # create_agent + HITL + guardrails + structured output
 │   ├── deep_agent.py          # Deep Agent engine (planning + researcher/critic subagents)
 │   ├── agui.py                # AG-UI protocol adapter (mounts /agui)
+│   ├── run_control.py         # Graceful cancel (cooperative drain) for in-flight runs
 │   ├── guardrails.py          # PII-redaction / blocklist middleware
 │   ├── middleware_pack.py     # Prebuilt middleware (summarization, limits, retry, todos)
 │   ├── mcp_tools.py           # Optional Model Context Protocol tool loader

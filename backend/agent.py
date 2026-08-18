@@ -26,6 +26,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware
 from pydantic import BaseModel, Field
 
+import run_control
 from guardrails import GuardrailMiddleware
 from llm import get_llm, text_of
 from middleware_pack import build_middleware_pack
@@ -167,9 +168,15 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
     """
     config = config or {"configurable": {"thread_id": thread_id}}
     interrupt_value = None
+    # Register a control so POST /cancel can drain this run gracefully.
+    control = run_control.new_control(thread_id)
+    cancelled = False
     try:
         async for mode, data in graph.astream(
-            command_input, config=config, stream_mode=["updates", "messages", "custom"]
+            command_input,
+            config=config,
+            stream_mode=["updates", "messages", "custom"],
+            control=control,
         ):
             if mode == "custom":
                 # Guardrail (PII redaction / blocklist) and other progress events.
@@ -187,6 +194,19 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
                 if token:
                     yield {"type": "content", "content": token, "done": False}
 
+    except run_control.GraphDrained as exc:
+        # Cooperative cancel: stopped at a superstep boundary, progress saved.
+        cancelled = True
+        logger.info("Agent run drained for thread=%s (%s)", thread_id, exc)
+        yield {"type": "cancelled", "message": "Run stopped — progress was saved."}
+    except Exception as exc:  # pragma: no cover - surfaced to the client
+        logger.exception("Agent streaming error")
+        yield {"type": "error", "content": f"Error: {exc}", "done": True}
+        return
+    finally:
+        run_control.release(thread_id)
+
+    try:
         state = await graph.aget_state(config)
         values = state.values or {}
         messages = values.get("messages", [])
@@ -198,7 +218,11 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
             "type": "state",
             "requires_input": bool(state.next),
             "final_response": final,
-            "current_step": "awaiting_approval" if state.next else "completed",
+            "current_step": "cancelled"
+            if cancelled
+            else ("awaiting_approval" if state.next else "completed"),
+            "cancelled": cancelled,
+            "resumable": cancelled and bool(state.next),
         }
         # Surface structured output when the agent was built with a response_format.
         structured = values.get("structured_response")
