@@ -214,6 +214,43 @@ def using_mock_llm() -> bool:
     return not has_model and not has_key
 
 
+def requests_per_second() -> Optional[float]:
+    """Client-side request rate cap (``LLM_REQUESTS_PER_SECOND``); ``None`` = off.
+
+    Free/low-tier provider keys throttle aggressively, and this template can
+    issue several calls at once (the workflow fans out one call per
+    sub-question). Without a cap those bursts hit 429s and the provider SDK's
+    own retries stall the run. Setting this smooths calls out instead.
+    """
+    raw = os.getenv("LLM_REQUESTS_PER_SECOND", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+        return value if value > 0 else None
+    except ValueError:
+        return None
+
+
+def _build_rate_limiter():
+    """Return an ``InMemoryRateLimiter`` when a rate cap is configured."""
+    rps = requests_per_second()
+    if rps is None:
+        return None
+    try:
+        from langchain_core.rate_limiters import InMemoryRateLimiter
+
+        # Allow a tiny burst (or 1 request) before throttling kicks in.
+        return InMemoryRateLimiter(
+            requests_per_second=rps,
+            check_every_n_seconds=min(0.1, 1 / rps),
+            max_bucket_size=max(1.0, rps),
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Could not enable the LLM rate limiter: %s", exc)
+        return None
+
+
 def get_llm(**overrides: Any) -> BaseChatModel:
     """Return a chat model based on environment configuration.
 
@@ -230,6 +267,13 @@ def get_llm(**overrides: Any) -> BaseChatModel:
     model = os.getenv("LLM_MODEL", "gpt-4o-mini")
     provider = os.getenv("LLM_PROVIDER") or None
     params: dict[str, Any] = {"temperature": float(os.getenv("LLM_TEMPERATURE", "0.7"))}
+
+    # Throttle client-side so bursts don't trip provider rate limits.
+    rate_limiter = _build_rate_limiter()
+    if rate_limiter is not None:
+        params["rate_limiter"] = rate_limiter
+        logger.info("LLM rate limiting enabled (%.3g req/s)", requests_per_second())
+
     params.update(overrides)
 
     try:

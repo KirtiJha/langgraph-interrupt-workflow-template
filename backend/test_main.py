@@ -43,6 +43,89 @@ def test_text_of_normalizes_block_content():
     assert text_of(["a", "b"]) == "ab"
 
 
+def test_rate_limiter_off_by_default_and_configurable(monkeypatch):
+    """LLM_REQUESTS_PER_SECOND builds a throttling limiter (free-tier friendly)."""
+    import llm
+
+    monkeypatch.delenv("LLM_REQUESTS_PER_SECOND", raising=False)
+    assert llm.requests_per_second() is None
+    assert llm._build_rate_limiter() is None
+
+    monkeypatch.setenv("LLM_REQUESTS_PER_SECOND", "2")
+    assert llm.requests_per_second() == 2.0
+    limiter = llm._build_rate_limiter()
+    assert limiter is not None and limiter.requests_per_second == 2.0
+
+    # Invalid / non-positive values disable it rather than crashing.
+    monkeypatch.setenv("LLM_REQUESTS_PER_SECOND", "not-a-number")
+    assert llm.requests_per_second() is None
+    monkeypatch.setenv("LLM_REQUESTS_PER_SECOND", "0")
+    assert llm.requests_per_second() is None
+
+
+def test_cancel_unknown_thread_is_a_noop(client):
+    """Cancelling a thread with no in-flight run reports it cleanly (no 500)."""
+    resp = client.post("/cancel", json={"thread_id": "no-such-thread"})
+    assert resp.status_code == 200
+    assert resp.json()["cancelled"] is False
+
+
+def test_graceful_cancel_drains_run_and_keeps_it_resumable():
+    """A cancelled run stops at a superstep boundary and stays resumable."""
+    import asyncio
+
+    import run_control
+
+    if not run_control.CANCEL_SUPPORTED:  # pragma: no cover
+        pytest.skip("LangGraph without RunControl")
+
+    from langgraph.checkpoint.memory import MemorySaver
+
+    import graph as graph_module
+
+    async def scenario():
+        # Slow the sub-researchers so the drain lands mid-run.
+        original = graph_module.sub_researcher
+
+        async def slow_sub_researcher(state):
+            await asyncio.sleep(1.0)
+            return await original(state)
+
+        graph_module.sub_researcher = slow_sub_researcher
+        try:
+            g = graph_module.build_research_graph(checkpointer=MemorySaver())
+            thread_id = "cancel-test"
+            config = {"configurable": {"thread_id": thread_id}}
+            await g.ainvoke(
+                {"user_query": "cancel me", "messages": []}, config
+            )  # runs to the first interrupt
+
+            async def cancel_soon():
+                # Land the request *during* the slow sub-researcher superstep;
+                # the drain then fires once that superstep completes.
+                await asyncio.sleep(0.3)
+                run_control.request_cancel(thread_id, "test cancel")
+
+            asyncio.create_task(cancel_soon())
+            events = [
+                e
+                async for e in graph_module.stream_research_response(
+                    g, thread_id, "proceed", config
+                )
+            ]
+        finally:
+            graph_module.sub_researcher = original
+
+        assert any(e["type"] == "cancelled" for e in events), "expected a cancelled event"
+        state = next(e for e in events if e["type"] == "state")
+        assert state["cancelled"] is True
+        assert state["resumable"] is True  # checkpointed — can be picked up later
+        # The control is released so the thread isn't stuck "cancelling".
+        assert run_control.is_active(thread_id) is False
+
+    asyncio.run(scenario())
+
+
 def test_capabilities_reports_active_features(client):
     caps = client.get("/capabilities").json()
     # Offline defaults: mock model, guardrails on, no MCP, no semantic memory.

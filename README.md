@@ -59,6 +59,8 @@ All three share the same provider-agnostic LLM, `web_search` tool, and long-term
 - **🧠 Deep Agent engine** — a third engine (`deepagents`) that **plans**, spawns **researcher + critic subagents**, and uses a virtual filesystem — with the same tool-approval HITL.
 - **🧱 Middleware power-pack** — prebuilt **summarization**, **call/tool-call limits**, **model retry**, **fallback**, and a **TodoList planner**, composed with the custom guardrail + HITL middleware.
 - **♻️ Resilient workflow (LangGraph 1.2)** — per-node **retries**, **timeouts**, and **compensation** (`error_handler`) so failures degrade gracefully instead of 500ing.
+- **🛑 Graceful cancel** — a **Stop** button that drains the run at a safe boundary: it finishes the current step, **checkpoints**, and stays **resumable** — no corrupted state.
+- **🚦 Rate-limit friendly** — a client-side request cap plus a parallelism cap, so free/low-tier provider keys don't get throttled into 429 stalls.
 - **🔌 Provider-agnostic** — OpenAI, Anthropic, Google, Groq, Mistral, IBM watsonx, Ollama… via LangChain's `init_chat_model`. One env var to switch.
 - **🆓 Zero-config demo** — a streaming-capable mock model runs the whole app with **no API keys**.
 - **💾 Durable execution** — optional `AsyncSqliteSaver` checkpointer; workflows survive server restarts.
@@ -335,6 +337,7 @@ minimal CopilotKit chat wired to `/agui` — start the backend, then
 | `/deep/start` | POST | Start/continue the Deep Agent engine (planning + subagents, SSE) |
 | `/deep/decide` | POST | Resume the Deep Agent with a tool-approval decision (SSE) |
 | `/agui` | POST | AG-UI protocol endpoint — drive the agent from any AG-UI client |
+| `/cancel` | POST | Gracefully stop an in-flight run — progress is checkpointed and resumable |
 | `/approval/start` | POST | Draft content for a task and pause for review |
 | `/approval/decide` | POST | Resume with `approve` / `edit` / `reject` |
 | `/capabilities` | GET | Which optional features are active (guardrails, MCP tools, structured output, semantic memory) — drives the UI status strip |
@@ -362,6 +365,8 @@ All configuration is via environment variables (see [`backend/.env.example`](bac
 | `AGENT_FALLBACK_MODEL` | Fall back to this model on failure | – |
 | `RETRY_MAX_ATTEMPTS` | Per-node retry attempts in the workflow | `3` |
 | `NODE_TIMEOUT_SECONDS` | Per-node wall-clock timeout | off |
+| `LLM_REQUESTS_PER_SECOND` | Client-side request cap (smooths bursts on rate-limited keys) | off |
+| `RESEARCH_MAX_SUBQUERIES` | Cap parallel sub-researchers in the workflow | unclamped |
 | `CORS_ORIGINS` | Comma-separated allowed origins | `*` |
 | `PORT` | Backend port | `8000` |
 

@@ -23,6 +23,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import Command, RetryPolicy, Send, interrupt
 
+import run_control
 from llm import get_llm, text_of
 from memory import get_active_store, load_user_memory, save_user_memory
 from tools import web_search
@@ -614,12 +615,17 @@ async def stream_research_response(
     logger.info("Streaming research for thread=%s choice=%s", thread_id, user_choice)
     config = config or {"configurable": {"thread_id": thread_id}}
 
+    # Register a control so POST /cancel can drain this run gracefully.
+    control = run_control.new_control(thread_id)
+    cancelled = False
+
     try:
         interrupt_message = None
         async for mode, data in graph.astream(
             Command(resume=user_choice),
             config=config,
             stream_mode=["custom", "messages", "updates"],
+            control=control,
         ):
             if mode == "custom":
                 event = data if isinstance(data, dict) else {"message": str(data)}
@@ -639,6 +645,20 @@ async def stream_research_response(
                 if isinstance(data, dict) and "__interrupt__" in data:
                     interrupt_message = data["__interrupt__"][0].value
 
+    except run_control.GraphDrained as exc:
+        # Cooperative cancel: the run stopped at a superstep boundary and its
+        # progress is checkpointed, so this thread can be resumed later.
+        cancelled = True
+        logger.info("Run drained for thread=%s (%s)", thread_id, exc)
+        yield {"type": "cancelled", "message": "Run stopped — progress was saved."}
+    except Exception as exc:  # pragma: no cover - surfaced to the client
+        logger.exception("Streaming error")
+        yield {"type": "error", "content": f"Error in streaming: {exc}", "done": True}
+        return
+    finally:
+        run_control.release(thread_id)
+
+    try:
         state = await graph.aget_state(config)
         values = state.values or {}
         yield {
@@ -650,6 +670,10 @@ async def stream_research_response(
             "research_results": values.get("research_results", []),
             "sub_queries": values.get("sub_queries", []),
             "next": list(state.next),
+            "cancelled": cancelled,
+            # A drained run keeps its checkpoint — resume it by replaying the
+            # same step (see POST /resume or /stream).
+            "resumable": cancelled and bool(state.next),
         }
         yield {"type": "done", "content": "", "done": True}
     except Exception as exc:  # pragma: no cover - surfaced to the client

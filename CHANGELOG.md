@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Graceful cancel** (`backend/run_control.py`, `POST /cancel`): stop an
+  in-flight run using LangGraph 1.2's cooperative drain (`RunControl`). The run
+  finishes its current superstep, **checkpoints its progress, and raises
+  `GraphDrained`** — so nothing is corrupted and the thread stays **resumable**.
+  Wired into both the workflow and agent/deep engines (which emit a `cancelled`
+  event and a `resumable` flag), with a **Stop** button in the UI. Degrades to a
+  501 on a LangGraph without `RunControl`; reported in `/capabilities`.
+- **`LLM_REQUESTS_PER_SECOND`** — client-side request cap via LangChain's
+  `InMemoryRateLimiter`, applied to every provider through `init_chat_model`.
+  Smooths bursts (the workflow can fire several calls at once) so free/low-tier
+  keys don't hit 429s and stall on SDK retries. Off by default.
 - **`RESEARCH_MAX_SUBQUERIES`** — caps the number of parallel sub-researchers in
   the Workflow engine. The workflow makes one concurrent LLM call per
   sub-question, so on a rate-limited key (e.g. a free tier) setting this to 1-2

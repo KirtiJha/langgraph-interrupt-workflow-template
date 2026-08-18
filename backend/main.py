@@ -39,7 +39,8 @@ from agui import AGUI_AVAILABLE, AGUI_PATH, mount_agui
 from approval_workflow import build_approval_graph
 from graph import build_research_graph, resilience_config, stream_research_response
 from guardrails import GuardrailMiddleware
-from llm import using_mock_llm
+import run_control
+from llm import requests_per_second, using_mock_llm
 from mcp_tools import load_mcp_tools
 from memory import build_store, load_user_memory, save_user_memory
 
@@ -68,6 +69,7 @@ def _capabilities(store, mcp_tools) -> dict:
         "model": {
             "mock": using_mock_llm(),
             "name": None if using_mock_llm() else os.getenv("LLM_MODEL", "gpt-4o-mini"),
+            "requests_per_second": requests_per_second(),
         },
         "guardrails": {
             "enabled": guardrail is not None,
@@ -83,6 +85,7 @@ def _capabilities(store, mcp_tools) -> dict:
         "middleware": agent_middleware_summary(),
         "resilience": resilience_config(),
         "agui": {"enabled": AGUI_AVAILABLE, "path": AGUI_PATH if AGUI_AVAILABLE else None},
+        "graceful_cancel": run_control.CANCEL_SUPPORTED,
         "deep_agent": {
             "installed": DEEP_AGENT_ENABLED,
             "available": deep_agent_available(),
@@ -192,6 +195,11 @@ class AgentDecision(BaseModel):
     decisions: list[dict]
 
 
+class CancelRequest(BaseModel):
+    thread_id: str
+    reason: str = "cancelled by user"
+
+
 class ApprovalStart(BaseModel):
     task: str
 
@@ -283,6 +291,26 @@ async def get_research_state(thread_id: str, request: Request):
         raise
     except Exception as exc:
         raise HTTPException(status_code=404, detail=f"Error getting state: {exc}")
+
+
+@app.post("/cancel")
+async def cancel_run(data: CancelRequest):
+    """Gracefully stop an in-flight run (LangGraph cooperative drain).
+
+    The run finishes its current superstep, checkpoints its progress, and ends —
+    so nothing is corrupted and the thread can be resumed later. Works for any
+    engine (workflow, agent, deep agent).
+    """
+    if not run_control.CANCEL_SUPPORTED:
+        raise HTTPException(
+            status_code=501,
+            detail="Graceful cancel needs a LangGraph version with RunControl.",
+        )
+    requested = run_control.request_cancel(data.thread_id, data.reason)
+    if not requested:
+        # Nothing streaming for this thread — already finished, or never started.
+        return {"cancelled": False, "detail": "No run in progress for this thread."}
+    return {"cancelled": True, "thread_id": data.thread_id, "reason": data.reason}
 
 
 @app.post("/resume")

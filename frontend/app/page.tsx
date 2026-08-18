@@ -21,6 +21,7 @@ import {
   ShieldAlert,
   ListChecks,
   Layers,
+  Square,
 } from "lucide-react";
 
 interface Message {
@@ -327,7 +328,11 @@ export default function ChatInterface() {
 
     try {
       await consumeStream(path, body, (data) => {
-        if (data.type === "progress") {
+        if (data.type === "cancelled") {
+          // Graceful drain: the run stopped cleanly and progress was saved.
+          setIsLoading(false);
+          addMessage("system", data.message || "Run stopped — progress was saved.");
+        } else if (data.type === "progress") {
           setIsLoading(false);
           setProgress((prev) => [...prev, data.message || data.phase || "…"]);
         } else if (data.type === "content" && !data.done) {
@@ -428,6 +433,10 @@ export default function ChatInterface() {
             count: data.count,
             phrase: data.phrase,
           });
+        } else if (data.type === "cancelled") {
+          // Graceful drain: the run stopped cleanly and progress was saved.
+          setIsLoading(false);
+          addMessage("system", data.message || "Run stopped — progress was saved.");
         } else if (data.type === "progress") {
           setIsLoading(false);
           setProgress((prev) => [...prev, data.message || "Working…"]);
@@ -495,6 +504,21 @@ export default function ChatInterface() {
 
   // The agent + deep-agent engines share one SSE handler; only the path differs.
   const agentBase = () => (engine === "deep" ? "/deep" : "/agent");
+
+  // Gracefully stop the in-flight run (LangGraph cooperative drain). The run
+  // finishes its current step and checkpoints, so nothing is lost.
+  const cancelRun = async () => {
+    if (!threadId) return;
+    try {
+      await fetch(`${API_URL}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thread_id: threadId }),
+      });
+    } catch (error) {
+      console.error("Cancel failed:", error);
+    }
+  };
 
   const startAgent = async (message: string, threadOverride?: string) => {
     await consumeAgentStream(`${agentBase()}/start`, {
@@ -1710,6 +1734,17 @@ export default function ChatInterface() {
             <Send className="w-4 h-4" />
             <span className="hidden sm:inline font-medium">Send</span>
           </button>
+          {isLoading && threadId && capabilities?.graceful_cancel && (
+            <button
+              type="button"
+              onClick={cancelRun}
+              title="Stop this run — it finishes the current step and saves progress, so you can pick it up later"
+              className="flex items-center space-x-2 rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50"
+            >
+              <Square className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Stop</span>
+            </button>
+          )}
         </form>
 
         {!threadId && (
