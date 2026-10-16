@@ -158,6 +158,7 @@ export default function ModelSettingsButton({ apiUrl }: { apiUrl: string }) {
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
+        aria-label={label}
         title={
           active
             ? `Using your model: ${active.model} (${active.provider}) — click to change`
@@ -170,7 +171,7 @@ export default function ModelSettingsButton({ apiUrl }: { apiUrl: string }) {
         }`}
       >
         <Settings2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-        <span className="truncate">{label}</span>
+        <span className="hidden truncate sm:inline">{label}</span>
       </button>
 
       {/* Portal: the header's backdrop-blur would otherwise trap this fixed overlay. */}

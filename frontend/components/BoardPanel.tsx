@@ -26,19 +26,21 @@ function ghostsFor(pending: Approval[], number: number) {
   };
 }
 
-function Row({ item, board, pending }: { item: Issue; board: Board; pending: Approval[] }) {
+function Row({ item, board, pending, onOpen }: { item: Issue; board: Board; pending: Approval[]; onOpen?: (n: number) => void }) {
   const g = ghostsFor(pending, item.number);
   const closed = item.state !== "open";
   const touched = g.labels.length || g.comments || g.close || g.merge || g.review.length || g.retitle;
   const agentThread = (item.thread || []).filter((t) => t.author === "repo-steward");
   return (
-    <li className={`rounded-xl border p-2.5 ${closed ? "border-stone-100 bg-stone-50/70 opacity-70" : touched ? "ghost" : item.by_agent ? "border-emerald-200 bg-emerald-50/50" : "border-stone-200 bg-white"}`}>
+    <li onClick={() => onOpen?.(item.number)} onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) onOpen?.(item.number); }}
+        tabIndex={onOpen ? 0 : undefined} role={onOpen ? "button" : undefined} aria-label={onOpen ? `Open #${item.number}: ${item.title}` : undefined}
+        className={`cursor-pointer rounded-xl border p-2.5 transition-colors hover:border-stone-300 ${closed ? "border-stone-100 bg-stone-50/70 opacity-70" : touched ? "ghost" : item.by_agent ? "border-emerald-200 bg-emerald-50/50" : "border-stone-200 bg-white"}`}>
       <div className="flex items-start gap-2">
         <span className={`mt-0.5 shrink-0 font-mono text-[11px] ${closed ? "text-stone-400" : "text-stone-500"}`}>#{item.number}</span>
         <div className="min-w-0 flex-1">
           <div className={`text-[13px] leading-snug ${closed ? "text-stone-500 line-through" : "text-ink"}`}>
             {g.retitle ? <><span className="line-through text-stone-400">{item.title}</span> <span className="text-ember-700">{g.retitle}</span></> : item.title}
-            {item.url && <a href={item.url} target="_blank" rel="noreferrer" className="ml-1 text-[11px] text-stone-400 hover:text-ember-700">↗</a>}
+            {item.url && <a href={item.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="ml-1 text-[11px] text-stone-400 hover:text-ember-700" aria-label="Open on GitHub">↗</a>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-1">
             {item.labels.map((l) => <LabelChip key={l} name={l} labels={board.labels} />)}
@@ -62,8 +64,16 @@ function Row({ item, board, pending }: { item: Issue; board: Board; pending: App
   );
 }
 
-export default function BoardPanel({ board, pending, compact }: { board: Board; pending: Approval[]; compact?: boolean }) {
+export default function BoardPanel({ board, pending, compact, onOpen }: { board: Board; pending: Approval[]; compact?: boolean; onOpen?: (n: number) => void }) {
   const [tab, setTab] = useState<Tab>("issues");
+  const [query, setQuery] = useState("");
+  const [onlyPending, setOnlyPending] = useState(false);
+  const match = (i: Issue) => {
+    if (onlyPending && !pending.some((a) => a.args?.number === i.number)) return false;
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return `#${i.number} ${i.title} ${i.labels.join(" ")} ${i.author}`.toLowerCase().includes(q);
+  };
   const openIssues = board.issues.filter((i) => i.state === "open");
   const openPulls = board.pulls.filter((i) => i.state === "open");
   const counts: Record<Tab, number> = { issues: openIssues.length, pulls: openPulls.length, labels: board.labels.length, activity: board.ledger.length };
@@ -74,7 +84,7 @@ export default function BoardPanel({ board, pending, compact }: { board: Board; 
     <div className={`flex h-full flex-col ${compact ? "" : "card"}`}>
       <div className="border-b border-stone-100 px-3 pt-2.5">
         <div className="flex items-center gap-2 text-sm">
-          <a href={board.repo.url} target="_blank" rel="noreferrer" className="truncate font-semibold text-ink hover:text-ember-700">{board.repo.full_name}</a>
+          <a href={board.repo.url} target="_blank" rel="noreferrer" className="min-w-0 truncate font-semibold text-ink hover:text-ember-700">{board.repo.full_name}</a>
           <span className={`chip ml-auto ${board.mode === "live" ? (board.can_write ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-violet-200 bg-violet-50 text-violet-700") : "border-stone-200 bg-stone-50 text-stone-600"}`}>
             {board.mode === "live" ? (board.can_write ? "live · write" : "live · read-only") : "sample repo"}
           </span>
@@ -92,17 +102,24 @@ export default function BoardPanel({ board, pending, compact }: { board: Board; 
         ))}
       </div>
 
+      {(tab === "issues" || tab === "pulls") && (
+        <div className="flex items-center gap-2 border-b border-stone-100 px-3 py-2">
+          <input className="field h-8 py-1 text-xs" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter by title, label, author, #number" aria-label="Filter the board" />
+          <button type="button" onClick={() => setOnlyPending((v) => !v)} aria-pressed={onlyPending}
+                  className={`chip shrink-0 ${onlyPending ? "border-ember-300 bg-ember-50 text-ember-700" : "border-stone-200 bg-white text-stone-600"}`}>Pending</button>
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto p-3 text-[13px]">
         {tab === "issues" && (
           <ul className="space-y-1.5">
-            {board.issues.length === 0 && <li className="py-8 text-center text-xs text-stone-400">No open issues.</li>}
-            {board.issues.map((i) => <Row key={i.number} item={i} board={board} pending={pending} />)}
+            {board.issues.filter(match).length === 0 && <li className="py-8 text-center text-xs text-stone-400">{board.issues.length ? "Nothing matches." : "No open issues."}</li>}
+            {board.issues.filter(match).map((i) => <Row key={i.number} item={i} board={board} pending={pending} onOpen={onOpen} />)}
           </ul>
         )}
         {tab === "pulls" && (
           <ul className="space-y-1.5">
-            {board.pulls.length === 0 && <li className="py-8 text-center text-xs text-stone-400">No open pull requests.</li>}
-            {board.pulls.map((i) => <Row key={i.number} item={i} board={board} pending={pending} />)}
+            {board.pulls.filter(match).length === 0 && <li className="py-8 text-center text-xs text-stone-400">{board.pulls.length ? "Nothing matches." : "No open pull requests."}</li>}
+            {board.pulls.filter(match).map((i) => <Row key={i.number} item={i} board={board} pending={pending} onOpen={onOpen} />)}
           </ul>
         )}
         {tab === "labels" && (

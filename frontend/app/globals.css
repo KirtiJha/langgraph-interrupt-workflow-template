@@ -1,15 +1,10 @@
+@import "./theme.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Mission Control design tokens — warm paper, ink text, one confident accent. */
+/* Design tokens live in theme.css (light + dark). Warm paper, ink text, one ember accent. */
 @layer base {
-  :root {
-    --paper: 250 248 243;
-    --ink: 28 25 23;
-    --accent: 234 88 12; /* ember */
-    --accent-soft: 255 237 213;
-  }
 
   html {
     scroll-behavior: smooth;
@@ -73,6 +68,9 @@
   .ghost {
     @apply border-dashed border-ember-400 bg-ember-50/60;
   }
+  .card-focus {
+    @apply ring-2 ring-ember-500 ring-offset-2 ring-offset-paper;
+  }
 }
 
 @layer utilities {
@@ -84,7 +82,7 @@
     display: none;
   }
   .bg-grid {
-    background-image: radial-gradient(rgb(28 25 23 / 0.06) 1px, transparent 1px);
+    background-image: radial-gradient(rgb(var(--ink) / 0.07) 1px, transparent 1px);
     background-size: 22px 22px;
   }
   .tabular {
@@ -96,9 +94,9 @@
 .prose-steward p { margin: 0.35rem 0; }
 .prose-steward ul, .prose-steward ol { margin: 0.35rem 0; padding-left: 1.1rem; list-style: disc; }
 .prose-steward ol { list-style: decimal; }
-.prose-steward code { font-size: 0.8em; background: rgb(28 25 23 / 0.06); padding: 0.1rem 0.3rem; border-radius: 0.3rem; }
-.prose-steward pre { margin: 0.4rem 0; padding: 0.6rem; border-radius: 0.5rem; background: rgb(28 25 23 / 0.06); overflow: auto; font-size: 0.8em; }
+.prose-steward code { font-size: 0.8em; background: rgb(var(--ink) / 0.07); padding: 0.1rem 0.3rem; border-radius: 0.3rem; }
+.prose-steward pre { margin: 0.4rem 0; padding: 0.6rem; border-radius: 0.5rem; background: rgb(var(--ink) / 0.07); overflow: auto; font-size: 0.8em; }
 .prose-steward pre code { background: none; padding: 0; }
 .prose-steward h1, .prose-steward h2, .prose-steward h3 { font-weight: 600; margin: 0.6rem 0 0.25rem; font-size: 0.95em; }
 .prose-steward strong { font-weight: 600; }
-.prose-steward a { color: #c2410c; text-decoration: underline; text-underline-offset: 2px; }
+.prose-steward a { color: rgb(var(--c-ember-700)); text-decoration: underline; text-underline-offset: 2px; }

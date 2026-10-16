@@ -63,6 +63,14 @@ high-risk or irreversible actions (merges, closing PRs, active threads).
 approvals come back for new answers. On a live repo, what's already posted
 stays posted — the UI says so.
 
+**Built for every screen.** Phones get a collapsible decision sheet that shows
+one action at a time; tablets get the feed beside the board; laptops get all
+three panes. Light and dark themes follow your system (or the toggle). Click any
+issue for a drawer with its thread and the actions pending on it; filter the
+board; filter decisions by risk and approve all low-risk ones in one go.
+Keyboard: **J / K** move between actions, **A / E / R** act, **Shift + A**
+approve all, **L** approve low-risk, **?** for the full list.
+
 **Memory:** missions leave per-repository notes ("uses `needs-repro`") that
 shape the next one.
 

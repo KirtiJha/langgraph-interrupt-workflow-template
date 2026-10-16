@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **UI/UX pass for every screen size.** Tablet layout (feed + board); a
+  collapsible phone decision sheet with one card at a time; no horizontal
+  overflow on any size (it overflowed by 478px on phones).
+- **Dark mode** (system, light or dark; no flash on load) via CSS-variable
+  palettes, so every component themes without `dark:` variants.
+- **Decisions:** risk filters, "Approve low-risk", J/K focus with A/E/R on the
+  focused card, Shift+A, L, and a `?` shortcuts overlay; bulk decisions are
+  summarised as one feed line.
+- **Issue drawer:** click any issue or PR for its body, thread and pending actions.
+- **Board:** filter by text and "pending only".
+- **Feed and report:** long tool lists collapse; applied changes group into one
+  row; the report shows impact counts and a collapsible list.
+- The landing page loads the last repo used (or the sample) automatically, so
+  missions work on first paint.
+
 ### Changed
 - **The template is now Repo Steward: a maintainer agent for real GitHub
   repositories.** The simulated personal world is gone; the agent reads and

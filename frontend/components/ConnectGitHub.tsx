@@ -54,12 +54,12 @@ export default function ConnectGitHubButton({ repo }: { repo: string }) {
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog"
+      <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={token ? "GitHub connected" : "Connect GitHub"}
               title={token ? "GitHub connected — click to change" : "Connect a GitHub token to act on your repositories"}
               className={`flex items-center gap-1 text-xs font-medium rounded-full px-3 py-1.5 border transition-colors ${
                 token ? "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700" : "bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600 hover:text-gray-900"}`}>
         <Github className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-        <span className="truncate">{token ? "GitHub connected" : "Connect GitHub"}</span>
+        <span className="hidden truncate sm:inline">{token ? "GitHub connected" : "Connect GitHub"}</span>
       </button>
 
       {open && createPortal(

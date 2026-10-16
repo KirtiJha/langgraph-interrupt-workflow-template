@@ -137,7 +137,12 @@ function reduce(s: MissionUI, a: Action): MissionUI {
         case "world_ops": {
           const seen = new Set(feed.flatMap((e) => (e.kind === "change" ? e.ops.map((o) => JSON.stringify(o)) : [])));
           const ops = ev.ops.filter((o: any) => o.op !== "create_label" && !seen.has(JSON.stringify(o)));
-          if (ops.length) feed.push({ kind: "change", id: uid(), ops });
+          if (ops.length) {
+            // Consecutive changes read as one line of chips, not a column.
+            const last = feed[feed.length - 1];
+            if (last && last.kind === "change") feed[feed.length - 1] = { ...last, ops: [...last.ops, ...ops] };
+            else feed.push({ kind: "change", id: uid(), ops });
+          }
           return { ...s, feed };
         }
         case "report":
@@ -214,7 +219,18 @@ export function useMission() {
         entries.push({ kind: "decision", id: uid(), tone: d.type, text });
       }
     }
-    dispatch({ type: "decided", entries, count: entries.length });
+    // A bulk decision reads as one line, not ten.
+    const count = entries.length;
+    let shown = entries;
+    if (entries.length > 3) {
+      const byTone = new Map<string, number>();
+      for (const e of entries) if (e.kind === "decision") byTone.set(e.tone, (byTone.get(e.tone) || 0) + 1);
+      shown = [...byTone.entries()].map(([tone, n]) => ({
+        kind: "decision" as const, id: uid(), tone: tone as any,
+        text: `${tone === "approve" ? "Approved" : tone === "reject" ? "Rejected" : tone === "edit" ? "Edited" : "Answered"} ${n} action${n === 1 ? "" : "s"} at once`,
+      }));
+    }
+    dispatch({ type: "decided", entries: shown, count });
     await run(`/missions/${ui.threadId}/decide`, { decisions });
   }, [run, ui.threadId, ui.pending.approvals]);
 

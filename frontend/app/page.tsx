@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, Bot, Database, Plus, Rocket, TriangleAlert, X } from "lucide-react";
 import ConnectGitHubButton from "../components/ConnectGitHub";
+import ThemeToggle from "../components/ThemeToggle";
 import Gallery from "../components/Gallery";
 import ModelSettingsButton from "../components/ModelSettings";
 import Workspace from "../components/Workspace";
@@ -82,6 +83,7 @@ export default function Page() {
             )}
             <ConnectGitHubButton repo={ui.repo || sampleRepo} />
             <ModelSettingsButton apiUrl={API_URL} />
+            <ThemeToggle />
             {inMission && (
               <button type="button" onClick={leave} className="btn-outline h-8 px-2.5 text-xs" aria-label="New mission"><Plus className="h-3.5 w-3.5" aria-hidden="true" /><span className="hidden sm:inline">New mission</span></button>
             )}

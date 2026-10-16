@@ -249,7 +249,12 @@ def stale(c: Ctx) -> Step | str:
                                       "body": f"This PR hasn't moved in {p.get('inactive_days')} days and may need a rebase. "
                                               "Are you still working on it? Happy to help if it's stuck."}))
             nudged += 1
-        return (f"{closed} look resolved — I'd close them with a note. {nudged} need a nudge rather than a close.", calls)
+        say = []
+        if closed:
+            say.append(f"{closed} look{'s' if closed == 1 else ''} resolved — I'd close {'it' if closed == 1 else 'them'} with a note.")
+        if nudged:
+            say.append(f"{nudged} need{'s' if nudged == 1 else ''} a nudge rather than a close.")
+        return (" ".join(say), calls)
     if not c.tried("finish_mission"):
         return ("Stale sweep done.", [("finish_mission", {
             "summary": f"Swept {len(issues)} stale issues and {len(pulls)} PRs: {len(c.executed())} actions, {len(c.rejected())} declined.",

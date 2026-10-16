@@ -23,7 +23,7 @@ export function LabelChip({ name, labels, ghost }: { name: string; labels?: Labe
   const color = labels?.find((l) => l.name === name)?.color || "ededed";
   return (
     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${ghost ? "border-dashed" : ""}`}
-          style={{ backgroundColor: `#${color}22`, borderColor: `#${color}`, color: "#1c1917" }}>{name}</span>
+          style={{ backgroundColor: `#${color}2e`, borderColor: `#${color}`, color: "rgb(var(--chip-text))" }}>{name}</span>
   );
 }
 
@@ -93,8 +93,9 @@ export function Preview({ preview, labels }: { preview: any; labels?: Label[] })
 
 type Mode = "idle" | "edit" | "reject" | "respond";
 
-export default function ApprovalCard({ approval, index, onDecide, busy, hotkeys, labels }: {
+export default function ApprovalCard({ approval, index, onDecide, busy, hotkeys, labels, onFocus }: {
   approval: Approval; index: number; onDecide: (d: Decision) => void; busy: boolean; hotkeys: boolean; labels?: Label[];
+  onFocus?: () => void;
 }) {
   const [mode, setMode] = useState<Mode>("idle");
   const [draft, setDraft] = useState<Record<string, any>>({});
@@ -152,7 +153,9 @@ export default function ApprovalCard({ approval, index, onDecide, busy, hotkeys,
   };
 
   return (
-    <article className="card animate-slide-up p-4" aria-label={`Approval ${index + 1}: ${describeCall(approval.name, approval.args)}`}>
+    <article id={`approval-${approval.interrupt_id}`} onMouseDown={onFocus} onFocusCapture={onFocus}
+             className={`card min-w-0 animate-slide-up scroll-mt-24 p-4 transition-shadow ${hotkeys ? "card-focus" : ""}`}
+             aria-label={`Approval ${index + 1}: ${describeCall(approval.name, approval.args)}`} aria-current={hotkeys ? "true" : undefined}>
       <header className="flex items-start gap-3">
         <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ember-100 text-ember-700"><Icon className="h-4.5 w-4.5" aria-hidden="true" /></div>
         <div className="min-w-0 flex-1">
