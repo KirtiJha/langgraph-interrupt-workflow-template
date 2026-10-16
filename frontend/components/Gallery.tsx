@@ -33,7 +33,13 @@ export default function Gallery({ missions, sampleRepo, offlinePilot, token, aut
   const [goal, setGoal] = useState("");
   const [recent, setRecent] = useState<string[]>([]);
 
-  useEffect(() => { setRecent(recentRepos()); }, []);
+  // Missions should work on first paint: open the last repo used, or the sample.
+  useEffect(() => {
+    const r = recentRepos();
+    setRecent(r);
+    if (!repo && !inspecting) inspect(r[0] || sampleRepo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sampleRepo]);
 
   const inspect = async (slug: string) => {
     setInspecting(true);
@@ -109,7 +115,13 @@ export default function Gallery({ missions, sampleRepo, offlinePilot, token, aut
         </div>
 
         <aside className="card bg-grid p-5">
-          {!repo ? (
+          {!repo && inspecting ? (
+            <div className="animate-pulse space-y-3" aria-label="Loading repository">
+              <div className="h-5 w-2/3 rounded bg-stone-200" /><div className="h-3 w-full rounded bg-stone-100" />
+              <div className="grid grid-cols-3 gap-2">{[0, 1, 2].map((i) => <div key={i} className="h-16 rounded-xl bg-stone-100" />)}</div>
+              <div className="h-3 w-1/2 rounded bg-stone-100" />
+            </div>
+          ) : !repo ? (
             <>
               <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">Repository</div>
               <p className="mt-3 text-sm text-stone-500">Load a repository to see its board: open issues, pull requests, labels — and what the steward remembers about it.</p>
@@ -131,9 +143,9 @@ export default function Gallery({ missions, sampleRepo, offlinePilot, token, aut
                 </span>
               </div>
               <dl className="mt-3 grid grid-cols-3 gap-2 text-sm">
-                <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="flex items-center gap-1 text-xs text-stone-500"><CircleDot className="h-3 w-3" aria-hidden="true" />Issues</dt><dd className="tabular text-lg font-semibold text-ink">{repo.issues.length}<span className="text-xs font-normal text-stone-500"> · {repo.issues.filter((i) => !i.labels.length).length} unlabelled</span></dd></div>
-                <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="flex items-center gap-1 text-xs text-stone-500"><GitPullRequest className="h-3 w-3" aria-hidden="true" />PRs</dt><dd className="tabular text-lg font-semibold text-ink">{repo.pulls.length}</dd></div>
-                <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="flex items-center gap-1 text-xs text-stone-500"><Star className="h-3 w-3" aria-hidden="true" />Stars</dt><dd className="tabular text-lg font-semibold text-ink">{repo.repo.stars.toLocaleString()}</dd></div>
+                <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="flex items-center gap-1 text-xs text-stone-500"><CircleDot className="h-3 w-3" aria-hidden="true" />Issues</dt><dd className="tabular text-lg font-semibold text-ink">{repo.issues.length}</dd><dd className="text-[11px] text-stone-500">{repo.issues.filter((i) => !i.labels.length).length} unlabelled</dd></div>
+                <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="flex items-center gap-1 text-xs text-stone-500"><GitPullRequest className="h-3 w-3" aria-hidden="true" />PRs</dt><dd className="tabular text-lg font-semibold text-ink">{repo.pulls.length}</dd><dd className="text-[11px] text-stone-500">{repo.pulls.filter((p) => (p.author_association || "").startsWith("FIRST")).length} from first-timers</dd></div>
+                <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="flex items-center gap-1 text-xs text-stone-500"><Star className="h-3 w-3" aria-hidden="true" />Stars</dt><dd className="tabular text-lg font-semibold text-ink">{repo.repo.stars.toLocaleString()}</dd><dd className="text-[11px] text-stone-500">{repo.labels.length} labels</dd></div>
               </dl>
               <div className="mt-2 flex flex-wrap gap-1">{repo.labels.slice(0, 8).map((l) => <span key={l.name} className="chip border-stone-200 bg-white text-stone-700" style={{ borderColor: `#${l.color}` }}>{l.name}</span>)}{repo.labels.length > 8 && <span className="text-[11px] text-stone-400">+{repo.labels.length - 8}</span>}</div>
               {repo.rate?.remaining && Number(repo.rate.remaining) < 20 && <p className="mt-2 text-[11px] text-amber-700">GitHub rate limit nearly used ({repo.rate.remaining} left). A token raises it to 5,000/h.</p>}
