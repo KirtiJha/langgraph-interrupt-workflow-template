@@ -1,4 +1,4 @@
-# 🧩 LangGraph Interrupt Workflow Template
+# 🚀 Mission Control — a human-in-the-loop agent template
 
 [![CI](https://github.com/KirtiJha/langgraph-interrupt-workflow-template/actions/workflows/ci.yml/badge.svg)](https://github.com/KirtiJha/langgraph-interrupt-workflow-template/actions/workflows/ci.yml)
 [![LangGraph](https://img.shields.io/badge/LangGraph-v1-1C3C3C?logo=langchain&logoColor=white)](https://docs.langchain.com/oss/python/langgraph/overview)
@@ -8,94 +8,91 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-⚡ A **production-ready, provider-agnostic template** for building **human-in-the-loop AI workflows** with **LangGraph v1**. Pause an agent mid-execution, ask a human to approve / edit / redirect, then resume exactly where it left off — with a polished Next.js chat UI on top.
+**Give it a job. It asks before it acts.**
+
+Mission Control is a personal agent that gets real-life jobs done inside a
+simulated world — your inbox, calendar, wallet, contacts, subscriptions and
+bookings — and **pauses for your approval** on anything that costs money, can't
+be undone, or involves other people. Approve, edit, reject or reply; rewind to
+any decision and try another path. It is a complete, production-shaped
+reference for **human-in-the-loop agents on LangGraph v1 + LangChain v1**.
 
 <p align="center">
-  <img src="docs/demo.gif" alt="End-to-end tour: the Agent engine pauses for approval on a tool call (approve / edit args / answer / reject) and streams a real answer; the Workflow engine runs multi-step human-in-the-loop research in parallel; and time travel rewinds to any earlier step." width="100%">
+  <img src="docs/demo.gif" alt="Mission Control tour: pick a mission, the agent reads your world and compares options, asks which venue, pauses for approval with a preview of the charge, you reject with a reason and it books the runner-up, you edit the deposit, invites go out, a mission report lands, and you rewind to a decision point and branch." width="100%">
 </p>
-<p align="center"><sub>End-to-end tour on a real model (Gemini): agent tool-approval → workflow multi-step HITL + parallel research → time travel.</sub></p>
 
-> **Runs with zero configuration.** Clone it and go — a built-in mock model lets you explore the full interrupt flow without any API keys. Add a provider when you're ready.
+> **Runs with zero configuration.** The five starter missions are flown by an
+> offline *pilot*, so the whole loop — act, pause, approve, rewind — works with
+> no API key. Add any model (in the UI or the env) for open-ended goals.
+
+**Live demo:** [langgraph-hitl.vercel.app](https://langgraph-hitl.vercel.app)
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/KirtiJha/langgraph-interrupt-workflow-template)
 
-> One click → a ready-to-run dev container with Python, Node, and all dependencies installed.
-
 ---
 
-## ✨ Why this template?
+## ✨ What you get
 
-Most "agent" demos run start-to-finish with no human control. Real-world systems — approvals, content review, high-stakes tool calls — need a human in the loop. This template shows **three complementary ways** to do that with the latest LangGraph:
+| | |
+|---|---|
+| 🎯 **Approvals that mean something** | Every approval visibly changes the world: approve a deposit and the wallet drops, approve an invite and the calendar fills. Reject and the agent finds the runner-up. |
+| 🧾 **Risk-scored, previewed actions** | Each pending action is scored against the *current* world (amount, refundable, recipients, calendar clashes, urgency) and shows exactly what will change — wallet before → after, the full email, a ghost calendar event. |
+| 🎚️ **Autonomy you choose** | *Careful* asks before everything; *Balanced* asks when it matters or above your spend limit; *Autopilot* asks only for high-risk or irreversible actions. |
+| ✏️ **Four decisions** | Approve · Edit the arguments (schema-driven form) · Reject with a reason · Reply instead. Hotkeys **A / E / R**, numbered options for questions. |
+| ⏪ **Time travel** | Branch from any decision point; the world rewinds with it and the approvals come back for new answers. The original run is preserved. |
+| 🧠 **Memory** | Missions leave memories ("Mom is vegetarian") that shape the next one. Semantic recall with embeddings, optional. |
+| 🔌 **Any model, from the UI** | Pick a provider, model and key in the browser (OpenAI, Anthropic, Google, Vercel AI Gateway, OpenRouter, Groq, Together, DeepSeek, Ollama, any OpenAI-compatible URL). Sent per request, never stored. |
+| 💾 **Durable** | With `DATABASE_URL`, missions live in Postgres: pause for days, resume from another instance, survive redeploys. |
+| 🛡️ **Guardrails, limits, retries** | PII masking before the model, a blocklist, summarisation, call limits, retries, graceful cancel. |
+| 📊 **Evals** | Scores *asked before acting*, *budget respected*, *no forbidden actions* and more — offline or as a LangSmith experiment. |
+| 🔭 **Tooling** | LangGraph Studio, AG-UI endpoint for CopilotKit-style clients, MCP tools gated like any other action, Vercel one-click deploy, Docker. |
 
-| Pattern | File | Best for |
-|---------|------|----------|
-| 🛠️ **Custom multi-step interrupt graph** | `backend/graph.py` | Workflows with several explicit decision points (approve plan → pick direction → choose format). |
-| ✅ **Approve / edit / reject workflow** | `backend/approval_workflow.py` | Draft-then-review flows: the AI drafts, a human approves, edits, or rejects with feedback (redrafts on reject). |
-| 🤖 **Prebuilt agent + HITL middleware** | `backend/agent.py` | Tool-using agents where you want approval *only* before sensitive actions, with minimal code (`create_agent` + `HumanInTheLoopMiddleware`). |
-
-All three use the same primitive: `interrupt()` pauses the graph, **persists state**, and waits for `Command(resume=...)`.
-
-### 🔀 Three engines, one UI
-
-The chat app ships with a live **Workflow ↔ Agent ↔ Deep Agent** toggle so you can compare the control paradigms on the same screen:
-
-| Engine | Control flow | Human-in-the-loop |
-|--------|--------------|-------------------|
-| **Workflow** (`graph.py`) | Deterministic StateGraph — fixed interrupt points + parallel `Send` research | Structured choices at each step |
-| **Agent** (`agent.py`) | Model-driven `create_agent` loop — the LLM decides when to call tools | Approve / edit / reject the tool call before it runs |
-| **Deep Agent** (`deep_agent.py`) | Plans with a to-do list, spawns **researcher + critic subagents**, uses a virtual filesystem for scratch space | Same tool approval, now inside a planning/delegation loop |
-
-All three share the same provider-agnostic LLM, `web_search` tool, and long-term memory. *(The Deep Agent runs offline too, but its planning/delegation only becomes visible with a real provider model.)*
-
-## 🚀 Features
-
-- **🧩 Human-in-the-loop, done right** — multiple interrupt points, resume with approve/edit/redirect.
-- **🔀 Parallel research (`Send`)** — a planner fans out concurrent sub-researchers (map-reduce) via `Command(goto=[Send(...)])`, with **live progress streaming**.
-- **🧠 Long-term memory** — a LangGraph `Store` remembers a user's topics & preferences **across sessions**, not just within a thread. Optional **semantic recall** with embeddings.
-- **⏪ Time travel** — rewind to any past checkpoint and **fork** a different path; the original run is preserved.
-- **🛡️ Guardrail middleware** — composable safety layer that **redacts PII** before the model sees it and can block disallowed input, stacked with the HITL middleware.
-- **🔗 MCP tools** — optionally load tools from any **Model Context Protocol** server and expose them to the agent, gated by the same human approval.
-- **📦 Structured output** — opt in to a validated `ResearchSummary` object (`summary`, `key_findings`, `sources`, `confidence`).
-- **🧠 Deep Agent engine** — a third engine (`deepagents`) that **plans**, spawns **researcher + critic subagents**, and uses a virtual filesystem — with the same tool-approval HITL.
-- **🧱 Middleware power-pack** — prebuilt **summarization**, **call/tool-call limits**, **model retry**, **fallback**, and a **TodoList planner**, composed with the custom guardrail + HITL middleware.
-- **♻️ Resilient workflow (LangGraph 1.2)** — per-node **retries**, **timeouts**, and **compensation** (`error_handler`) so failures degrade gracefully instead of 500ing.
-- **🛑 Graceful cancel** — a **Stop** button that drains the run at a safe boundary: it finishes the current step, **checkpoints**, and stays **resumable** — no corrupted state.
-- **🚦 Rate-limit friendly** — a client-side request cap plus a parallelism cap, so free/low-tier provider keys don't get throttled into 429 stalls.
-- **🎯 Approval policy, not approve-everything** — one env-configurable rule for *which* tools pause and *when*: gate shell/delete/writes always, exempt read-only tools, and (optionally) pause other calls **only when their arguments look risky**.
-- **🧾 Schema-validated, per-call approvals** — each tool call interrupts on its own with a JSON `response_schema`; the approval form is generated from the tool's real argument schema and edits are validated before the agent resumes.
-- **🔌 Any provider, any model** — OpenAI, Anthropic, Google natively; **Vercel AI Gateway** (one key, every provider's models); or **any OpenAI-compatible endpoint** (OpenRouter, Groq, Together, DeepSeek, Ollama, vLLM…). A misconfigured model is shown as an error in the UI, never silently swapped for the mock.
-- **🆓 Zero-config demo** — a streaming-capable mock model runs the whole app with **no API keys**.
-- **💾 Durable, multi-instance execution** — set `DATABASE_URL` and paused runs + memory live in **Postgres**, so a run paused on one serverless instance resumes on another (tested in CI against real Postgres); SQLite for a single server.
-- **▲ One-click Vercel deploy** — Next.js frontend + zero-config FastAPI backend, with Neon Postgres from the Vercel Marketplace.
-- **🤖 Latest agent stack** — LangGraph **v1.2** + LangChain **v1**, `create_agent`, and `HumanInTheLoopMiddleware`.
-- **📡 Streaming** — Server-Sent Events stream progress *and* the final answer to the UI.
-- **🔭 LangGraph Studio ready** — `langgraph.json` registers all graphs for `langgraph dev`.
-- **🎨 Modern, accessible UI** — Next.js 15 + React 19 chat interface with live progress and a rewind panel; **mobile-first** (`100dvh` shell, wrap-safe header), **keyboard & screen-reader friendly** (ARIA roles, auto-focused decisions, Escape, focus rings, live regions), and **reduced-motion aware**.
-- **📊 Evaluation harness** — score the agent on answer **correctness** *and* whether it **paused for approval** (`backend/evals`), offline or as a tracked LangSmith experiment.
-- **🔌 AG-UI protocol** — the agent is exposed at `/agui` over the open [AG-UI](https://docs.ag-ui.com) protocol, so it plugs into any AG-UI client (e.g. **CopilotKit**) — human approval included — without touching the bundled UI.
-- **🃏 Generative approval card** — the tool-approval interrupt renders as a structured card: per-field argument editing and **approve / edit / reject / answer** actions.
-- **✅ Tested & CI'd** — pytest suite + GitHub Actions for backend and frontend.
-
-## 🏗️ Architecture
+## 🧭 How it works
 
 ```
-┌──────────────────┐     HTTP / SSE      ┌──────────────────┐         ┌────────────────────┐
-│   Frontend       │ ──────────────────► │   Backend        │ ──────► │   LangGraph        │
-│   Next.js 15     │ ◄────────────────── │   FastAPI        │ ◄────── │   workflow         │
-│ • Chat UI        │                     │ • /start /resume │         │ • interrupt()      │
-│ • Interrupt cards│                     │ • /stream (SSE)  │         │ • checkpointer     │
-│ • Live progress  │                     │ • lifespan graph │         │ • resume via Command│
-└──────────────────┘                     └──────────────────┘         └────────────────────┘
+┌────────────────────┐   SSE    ┌─────────────────────────┐        ┌──────────────────────────┐
+│ Next.js UI         │ ◄──────► │ FastAPI  /missions/*    │ ─────► │ LangGraph create_agent   │
+│ • mission gallery  │          │ • start / decide / fork │        │ • world in state         │
+│ • feed + decisions │          │ • timeline / history    │        │ • HITL middleware        │
+│ • your world       │          │ • X-LLM-* model headers │        │ • Postgres checkpoints   │
+└────────────────────┘          └─────────────────────────┘        └──────────────────────────┘
 ```
 
-## ⚡ Quick Start (zero config)
+The agent is a plain `create_agent` with tools in two groups. **Reading tools**
+(`read_inbox`, `read_calendar`, `check_wallet`, `search_*`, `get_quotes`…) run
+freely. **Acting tools** (`book`, `pay`, `send_email`, `add_calendar_event`,
+`archive_emails`, `cancel_subscription`) return `Command(update={"world":
+{"ops": [...]}})` — they never mutate anything directly. A reducer applies the
+operations to `state["world"]`, which is why the world is checkpointed, rewinds
+with time travel, and forks cleanly.
+
+`HumanInTheLoopMiddleware(interrupt_mode="per_call")` gates the acting tools.
+Its `when` predicate is the **risk policy** (`backend/mission/policy.py`): it
+reads the world and the autonomy setting from state, scores the call, records
+the assessment for the UI, and decides whether to pause.
+
+```python
+InterruptOnConfig(
+    allowed_decisions=["approve", "edit", "reject", "respond"],
+    when=lambda req: should_ask(assess(tool, req.tool_call["args"], req.state["world"]), req.state["autonomy"]),
+)
+```
+
+`ask_user` shows the *other* kind of interrupt — a raw `interrupt()` from inside
+a tool — for choices only you can make ("Olive & Fig or Trattoria Nonna?").
+
+Forking uses `aupdate_state` at an earlier checkpoint, which creates a new
+branch rather than rewriting history; resuming from it re-runs the gated tools,
+which raise their interrupts again.
+
+## ⚡ Quick start (zero config)
 
 ```bash
 # 1. Backend
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env            # works as-is with the built-in mock model
+cp .env.example .env            # works as-is on the offline pilot
 python main.py                  # http://localhost:8000  (docs at /docs)
 
 # 2. Frontend (new terminal)
@@ -104,21 +101,32 @@ npm install
 npm run dev                     # http://localhost:3000
 ```
 
-Open http://localhost:3000, ask a question, and watch the workflow pause for your input at each interrupt.
+Open http://localhost:3000, pick **Plan Mom's 60th birthday dinner**, and
+decide. Try rejecting the first venue, editing a deposit, and **Rewind →
+Branch from here**.
 
-### Use a real LLM — any provider, any model
+### Starter missions
 
-**From the UI (no restart):** click the **⚙ Server model** button in the
-header, pick a provider (Vercel AI Gateway, OpenAI, Anthropic, Google, OpenRouter,
-Groq, Together, DeepSeek, Ollama, or any OpenAI-compatible URL), type or pick a
-model, paste your key, then **Test connection** and **Save**. Every engine
-(workflow, agent, Deep Agent and its subagents, the approval drafter, AG-UI) uses
-that model. The key stays in your browser (sessionStorage, or localStorage if
-you tick *Remember*). It is sent as `X-LLM-*` headers with each request and
-applies to that request only; the server never stores or logs it.
-**Use server default** goes back to the server's model.
+| Mission | What the agent does | Shows off |
+|---|---|---|
+| 🎂 Plan Mom's 60th birthday dinner | Reads Mom's email, finds quiet vegetarian venues, asks which, books one, orders a cake, invites the family (not Mom) | Questions, rejection → runner-up, group email, budget |
+| 📦 Handle my apartment move | Compares mover and cleaner quotes, books with refundable deposits, emails the landlord, cancels the gym | Parallel quotes, deposits, irreversible cancel |
+| ✈️ Book a long weekend in Lisbon | Finds a free long weekend, compares flights and hotels, books, blocks the calendar | Calendar reasoning, high-value payments |
+| 📬 Get me to inbox zero | Replies to the urgent mail, schedules lunch, archives junk | Edit-before-send, mixed risk levels |
+| 💳 Cut subscriptions I don't use | Audits spend and cancels unused plans, one approval each | Autonomy levels, savings report |
 
-**From the environment (the server's default):** uncomment **one** option in `backend/.env`:
+Each one is scripted for the offline pilot (`backend/mission/pilot.py`), reacts
+to your decisions, and runs identically on a real model.
+
+## 🔌 Use a real model — any provider
+
+**From the UI (no restart):** click **Server model** in the header, pick a
+provider, type or pick a model, paste your key, **Test connection**, **Save**.
+The settings travel as `X-LLM-*` headers with each request and apply to that
+request only; the key stays in your browser and the server never stores it.
+Custom base URLs are checked against private addresses when deployed.
+
+**From the environment:** uncomment one option in `backend/.env`:
 
 ```env
 # 1) Vercel AI Gateway — one key, models from every provider
@@ -130,492 +138,157 @@ LLM_MODEL=anthropic:claude-sonnet-4-5        # + ANTHROPIC_API_KEY
 LLM_MODEL=gpt-4o-mini                        # + OPENAI_API_KEY
 LLM_MODEL=google_genai:gemini-2.5-flash      # + GOOGLE_API_KEY
 
-# 3) ANY OpenAI-compatible endpoint — OpenRouter, Groq, Together, DeepSeek, Ollama, vLLM, LM Studio…
+# 3) Any OpenAI-compatible endpoint — OpenRouter, Groq, Together, DeepSeek, Ollama, vLLM, LM Studio…
 LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_API_KEY=...
 LLM_MODEL=meta-llama/llama-3.3-70b-instruct
 ```
 
-OpenAI, Anthropic and Google SDKs ship by default; option 3 covers essentially
-everything else without another dependency. The header's model badge shows what
-is *actually* running — and if a configured model fails to load, it turns red
-with the reason instead of silently falling back to the mock.
-
-Owner controls for browser-chosen models:
-
-| Variable | Effect | Default |
-|----------|--------|---------|
+| Owner control | Effect | Default |
+|---|---|---|
 | `LLM_CLIENT_CONFIG` | `false` ignores model settings from the browser | `true` |
-| `LLM_CLIENT_CAN_USE_SERVER_KEY` | Let a browser-chosen model use the server's key when no key is entered (fine for a personal deploy) | `false` |
-| `LLM_CLIENT_ALLOW_PRIVATE_HOSTS` | Allow custom base URLs on private/loopback addresses (e.g. local Ollama) | `true` locally, `false` on Vercel |
+| `LLM_CLIENT_CAN_USE_SERVER_KEY` | Let a browser-chosen model use the server's key when none is entered | `false` |
+| `LLM_CLIENT_ALLOW_PRIVATE_HOSTS` | Allow custom base URLs on private/loopback addresses (local Ollama) | `true` locally, `false` on Vercel |
 
 ## ▲ Deploy to Vercel
 
-The app deploys as **two Vercel projects from this one repo** — the Next.js
-`frontend/` and the FastAPI `backend/` (Vercel runs FastAPI zero-config, with
-SSE streaming and lifespan support).
+Two Vercel projects from this one repo: the Next.js `frontend/` and the
+FastAPI `backend/` (zero-config, with SSE streaming and lifespan support).
 
-> **A database is required on Vercel.** Serverless requests can land on
-> different instances, so a run paused by one request must be resumable by
-> another. Set `DATABASE_URL` and the backend switches to a **Postgres**
-> checkpointer + memory store automatically. Without it, resumes fail with a
-> clear 404 explaining exactly this. (Verified in CI: a run paused on one app
-> instance is resumed by a fresh one.)
+> **A database is required on Vercel.** Serverless requests land on different
+> instances, so a mission paused by one request must be resumable by another.
+> Set `DATABASE_URL` and the backend switches to Postgres automatically; without
+> it, resumes fail with a clear 404 explaining this.
 
-**1. Backend** — [vercel.com/new](https://vercel.com/new) → import this repo →
-**Root Directory: `backend`** → Deploy. Then in the project:
+1. **Backend** — [vercel.com/new](https://vercel.com/new) → import → **Root Directory: `backend`** → Deploy. Then **Storage → Create Database → Neon** and connect it (sets `DATABASE_URL`); optionally add a model (`AI_GATEWAY_API_KEY` + `LLM_MODEL`) and `CORS_ORIGINS`. Redeploy and check `/capabilities` → `"persistence": {"checkpointer": "postgres"}`.
+2. **Frontend** — import again → **Root Directory: `frontend`** → `NEXT_PUBLIC_API_URL=https://<backend>.vercel.app` → Deploy.
 
-- **Storage → Create Database → Neon (Postgres)** and connect it — this sets
-  `DATABASE_URL`. Tables are created on first boot.
-- **Settings → Environment Variables** — your model (any option above), e.g.
-  `AI_GATEWAY_API_KEY` + `LLM_MODEL`, and later `CORS_ORIGINS` = your frontend URL.
-- Redeploy. Check `https://<backend>.vercel.app/capabilities` →
-  `"persistence": {"checkpointer": "postgres"}` and your model name.
+[![Deploy backend](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FKirtiJha%2Flanggraph-interrupt-workflow-template%2Ftree%2Fmain%2Fbackend&project-name=mission-control-backend&repository-name=mission-control-backend&env=AI_GATEWAY_API_KEY,LLM_MODEL&envDescription=Optional%3A%20a%20default%20model.%20Then%20add%20a%20Neon%20database%20from%20the%20Storage%20tab.&envLink=https%3A%2F%2Fgithub.com%2FKirtiJha%2Flanggraph-interrupt-workflow-template%23-use-a-real-model--any-provider)
+[![Deploy frontend](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FKirtiJha%2Flanggraph-interrupt-workflow-template%2Ftree%2Fmain%2Ffrontend&project-name=mission-control&repository-name=mission-control&env=NEXT_PUBLIC_API_URL&envDescription=URL%20of%20your%20deployed%20backend)
 
-**2. Frontend** — import the repo again → **Root Directory: `frontend`** → set
-`NEXT_PUBLIC_API_URL=https://<backend>.vercel.app` → Deploy.
+Streams run for up to 300s (`backend/vercel.json`). **Pause** is best-effort
+across instances. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for Docker,
+LangGraph Platform and self-hosted Postgres.
 
-Or start from a fresh copy of each half:
+## 🛡️ Production layers
 
-[![Deploy backend](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FKirtiJha%2Flanggraph-interrupt-workflow-template%2Ftree%2Fmain%2Fbackend&project-name=hitl-backend&repository-name=hitl-backend&env=AI_GATEWAY_API_KEY,LLM_MODEL&envDescription=Any%20model%3A%20set%20AI_GATEWAY_API_KEY%20%2B%20LLM_MODEL%20(e.g.%20anthropic%2Fclaude-sonnet-4.6).%20Then%20add%20a%20Neon%20database%20from%20the%20Storage%20tab.&envLink=https%3A%2F%2Fgithub.com%2FKirtiJha%2Flanggraph-interrupt-workflow-template%23use-a-real-llm--any-provider-any-model)
-[![Deploy frontend](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FKirtiJha%2Flanggraph-interrupt-workflow-template%2Ftree%2Fmain%2Ffrontend&project-name=hitl-frontend&repository-name=hitl-frontend&env=NEXT_PUBLIC_API_URL&envDescription=URL%20of%20your%20deployed%20backend%2C%20e.g.%20https%3A%2F%2Fhitl-backend.vercel.app)
+All optional, all env-configured, all degrade gracefully.
 
-Good to know on serverless:
-- Runs stream for up to **300s** (`backend/vercel.json`; up to 800s on Pro).
-- **Stop** is best-effort across instances: a cancel that reaches a different
-  instance than the running stream can't drain it (the run still finishes and
-  stays resumable). The client-side rate limit is per instance.
-- Paused runs, history/time-travel and long-term memory all live in Postgres,
-  so they survive redeploys.
+- **Guardrails** (`guardrails.py`) — an `AgentMiddleware` that masks cards, SSNs and phone numbers before the model sees them (email addresses too with `GUARDRAILS_REDACT_EMAILS=true` — off by default because an acting agent needs them) and refuses blocklisted input.
+- **Middleware power-pack** (`middleware_pack.py`) — summarisation, model/tool call limits, model retry, optional fallback model and to-do planner.
+- **Graceful cancel** (`run_control.py`) — **Pause** drains the run at a safe boundary; progress is checkpointed and the mission stays resumable.
+- **Second-opinion risk gate** — set `HITL_RISK_CLASSIFIER=jev` and [TypeSafe AI's Jev](https://typesafe.ai) decision model also classifies each action; when it flags something the policy would have let through, the agent asks. Falls back to the regex classifier without a key.
+- **MCP tools** — point `MCP_SERVERS` at any Model Context Protocol server; its tools join the agent and are treated as acting tools (medium risk, effects unknown) by the policy.
+- **Rate-limit friendly** — `LLM_REQUESTS_PER_SECOND` smooths bursts on free-tier keys.
 
-## 🧠 How interrupts work
+`GET /capabilities` reports what's active; the header shows the model and persistence badges.
 
-```python
-from langgraph.types import interrupt, Command
-
-async def format_selection_interrupt(state):
-    # Pause and ask the human. State is persisted automatically.
-    choice = interrupt("How should I format the final answer?")
-    return {"format_choice": choice}
-
-# Later, from your API:
-await graph.ainvoke(Command(resume="executive"), config)   # resumes exactly here
-```
-
-1. A node calls `interrupt(payload)` → execution pauses, state is checkpointed.
-2. The API returns the interrupt payload to the UI (`requires_input: true`).
-3. The user picks an option; the API calls `ainvoke(Command(resume=choice))`.
-4. The graph continues from the interrupted node with the user's input.
-
-### The modern agent pattern (HITL middleware)
-
-```python
-from langchain.agents import create_agent
-from langchain.agents.middleware import HumanInTheLoopMiddleware
-
-agent = create_agent(
-    model,
-    tools=[web_search],
-    middleware=[HumanInTheLoopMiddleware(interrupt_on={"web_search": True})],
-    checkpointer=checkpointer,
-)
-```
-
-Try it from the CLI:
-
-```bash
-cd backend && python agent.py "What are the latest advances in solid-state batteries?"
-```
-
-### Approve / edit / reject workflow
-
-A second example (`backend/approval_workflow.py`, UI at **`/approval`**) shows the
-three canonical human actions on a single interrupt:
-
-- **Approve** → send the draft as-is
-- **Edit** → send the human's revised version
-- **Reject + feedback** → the AI redrafts using the feedback, then pauses again
-
-```python
-response = interrupt({"type": "approval", "draft": draft, "actions": ["approve", "edit", "reject"]})
-# resume with: Command(resume={"action": "reject", "feedback": "Make it shorter"})
-```
-
-## 🧪 Advanced LangGraph features
-
-The research workflow is also a tour of LangGraph's more powerful primitives:
-
-**Parallel research with `Send` (map-reduce).** A planner node splits the
-question into sub-questions and fans them out to concurrent workers, combining
-`Command` (state update + dynamic routing) with `Send` (one task per item):
-
-```python
-return Command(
-    goto=[Send("sub_researcher", {"sub_query": q}) for q in sub_queries],
-    update={"sub_queries": sub_queries},
-)
-```
-
-Each worker streams a progress event (`get_stream_writer`) so the UI shows
-*"Researched: …"* live; results aggregate through a reset-aware reducer.
-
-**Cross-thread long-term memory (`Store`).** Pass a `user_id` and the assistant
-remembers across sessions — a brand-new thread recalls prior topics/preferences:
-
-```python
-graph = build_research_graph(checkpointer=saver, store=InMemoryStore())
-# in a node:  await store.aput(("memories", user_id), key, {"text": note})
-```
-
-**Time travel (rewind & fork).** List checkpoints and resume from any past one
-down a different path — without losing the original run:
-
-```python
-async for snap in graph.aget_state_history(config): ...   # GET /history/{thread_id}
-# resume from a past checkpoint -> POST /fork
-graph.astream(Command(resume=new_choice),
-              config={"configurable": {"thread_id": tid, "checkpoint_id": cid}})
-```
-
-## 🛡️ Production hardening
-
-Four optional layers turn the demo into something you'd ship. All degrade
-gracefully — the zero-config app is unaffected until you enable them.
-
-**Guardrail middleware (`backend/guardrails.py`).** A custom `AgentMiddleware`
-that runs on every model call, composed *alongside* the HITL middleware. It
-redacts PII before the model sees it (state is never mutated) and can refuse
-blocklisted input without calling the model at all:
-
-```python
-# middleware stack in build_agent():  guardrails wrap the model, HITL gates tools
-middleware = [GuardrailMiddleware.from_env(), HumanInTheLoopMiddleware(...)]
-```
-
-```env
-GUARDRAILS_ENABLED=true          # on by default, no extra deps
-GUARDRAILS_REDACT_PII=true       # mask emails / phones / cards / SSNs
-GUARDRAILS_BLOCKLIST=exploit,malware
-```
-
-**MCP tools (`backend/mcp_tools.py`).** Point `MCP_SERVERS` at any
-[Model Context Protocol](https://modelcontextprotocol.io) servers (inline JSON or
-a file path) and their tools are loaded and exposed to the agent — each gated by
-the same human approval as `web_search`:
-
-```env
-MCP_SERVERS='{"math": {"command": "python", "args": ["server.py"], "transport": "stdio"}}'
-# requires: pip install langchain-mcp-adapters
-```
-
-**Structured output (opt-in).** Set `AGENT_STRUCTURED_OUTPUT=true` (with a real
-model) and the agent returns a validated `ResearchSummary` in
-`state["structured_response"]`, surfaced on the agent SSE stream.
-
-**Semantic long-term memory.** Set `EMBEDDINGS_MODEL` and memories are recalled
-by *relevance* to the current question rather than recency:
-
-```env
-EMBEDDINGS_MODEL=openai:text-embedding-3-small
-EMBEDDING_DIMS=1536
-```
-
-**Middleware power-pack (prebuilt LangChain middleware).** The agent composes a
-curated stack of production middleware alongside the custom guardrail and HITL
-middleware — all env-configurable, with defaults that never trigger in a short
-chat:
-
-- `SummarizationMiddleware` — compresses old messages so long threads don't
-  overflow the context window
-- `ModelCallLimitMiddleware` / `ToolCallLimitMiddleware` — runaway & cost guards
-- `ModelRetryMiddleware` — retries transient endpoint errors with backoff
-- `TodoListMiddleware` *(opt-in)* — a `write_todos` planning tool for the agent
-- `ModelFallbackMiddleware` *(opt-in)* — fall back to another model on failure
-
-```env
-AGENT_MODEL_CALL_LIMIT=25        # cap model calls per run
-AGENT_TODO_LIST=true             # add the planning tool
-AGENT_FALLBACK_MODEL=gpt-4o-mini # resilience across providers
-```
-
-**Resilient workflow (LangGraph 1.2).** The LLM-backed graph nodes are hardened
-with the newest LangGraph durability primitives: a `retry_policy` (retries
-transient failures with backoff), an optional per-node `timeout`, and
-`error_handler` **compensation** — if analysis or final generation fails, the run
-degrades to a graceful fallback (Saga pattern) instead of returning a 500:
-
-```python
-builder.add_node("response_generator", response_generator,
-                 retry_policy=RetryPolicy(max_attempts=3),
-                 error_handler=_response_fallback,        # graceful degrade
-                 destinations=("persist_memory",))
-```
-
-```env
-RETRY_MAX_ATTEMPTS=3
-NODE_TIMEOUT_SECONDS=30          # per-node wall-clock cap (empty = off)
-```
-
-**Graceful cancel (LangGraph 1.2).** The **Stop** button doesn't kill the
-process — it asks the run to *drain*. The run finishes its current superstep,
-**checkpoints its progress**, and raises `GraphDrained`, so state is never left
-half-written and the thread stays **resumable**:
-
-```python
-control = RunControl()                       # one per run
-graph.astream(..., control=control)          # POST /cancel drains it
-control.request_drain("cancelled by user")   # stops at the next safe boundary
-```
-
-The stream then emits a `cancelled` event and a closing state with
-`resumable: true`. Works across all three engines.
-
-**Rate-limit friendly.** This template can issue several LLM calls at once (the
-workflow fans out one per sub-question), which trips the 429 limits on free/low
-tiers — where the provider SDK's own retries then stall the run. Two caps fix
-that:
-
-```env
-LLM_REQUESTS_PER_SECOND=0.5      # client-side request cap (all providers)
-RESEARCH_MAX_SUBQUERIES=2        # fewer parallel sub-researchers
-```
-
-**Per-call approvals with a response schema (langchain ≥ 1.4.6).** The agent
-runs `HumanInTheLoopMiddleware(interrupt_mode="per_call")`: every gated tool
-call raises its *own* interrupt, answered by id, and each one carries a JSON
-`response_schema` of the decisions it accepts — including the tool's real
-argument schema for edits. The approval card builds its form from that schema
-(typed fields, required markers, descriptions), and an edited call is validated
-server-side before the agent resumes. LangChain plans to make per-call the
-default; `HITL_INTERRUPT_MODE=batched` keeps the one-interrupt-per-turn shape.
-(The `/agui` adapter is pinned to batched mode, which is the shape AG-UI
-clients expect.)
-
-```python
-# resume: one decision per interrupt, keyed by its id
-Command(resume={interrupt.id: {"type": "approve"}})
-```
-
-**Approval policy — which tools pause, and when.** `approval_policy.py` turns a
-few env vars into the `interrupt_on` map every engine uses. The default
-(`HITL_POLICY=all`) pauses every tool that *acts* while exempting read-only ones
-(`ls`, `read_file`, …) — so a deep agent isn't asking permission to list its own
-scratch space, but **`execute` (shell), `delete` and writes always are**. Flip to
-`HITL_POLICY=selective` and only `HITL_ALWAYS` tools pause unconditionally;
-everything else pauses *only when its arguments look risky*, via an
-`InterruptOnConfig.when` predicate:
-
-```python
-InterruptOnConfig(allowed_decisions=[...], when=lambda req: looks_sensitive(req.tool_call["args"]))
-```
-
-That's the "approve the risky 5%, not every call" pattern that keeps agents
-usable in practice — defined once, applied to built-in, deep-agent and MCP tools.
-
-**Decision-model risk gate (Jev, optional).** The "does this look risky?" call
-is pluggable. The default is a regex. Set `HITL_RISK_CLASSIFIER=jev` and it
-asks [TypeSafe AI's **Jev**](https://typesafe.ai) — a *System One* model that
-returns a **typed verdict with calibrated confidence** in ~100 ms instead of
-text. The gate then pauses when Jev says *risky* **or when it isn't confident**
-(`HITL_RISK_CONFIDENCE`, default 0.75): escalating uncertainty to a human is
-exactly what a decision model is for, and the approval card shows the verdict
-("Jev: risky · 91% confident"). Needs `pip install langgraph-jev` +
-`TYPESAFE_API_KEY`; without them — or if the API errors — it falls back to the
-regex, so the template never depends on it.
-
-The active feature set is reported by `GET /capabilities` and shown as a status
-strip in the chat header.
-
-See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for Docker, LangGraph Platform,
-and Postgres-backed self-hosting.
-
-## 🔭 Visualize with LangGraph Studio
+## 🔭 LangGraph Studio & AG-UI
 
 ```bash
 pip install "langgraph-cli[inmem]"
-langgraph dev          # opens LangGraph Studio with the research, approval, agent, and deep_agent graphs
+langgraph dev          # LangGraph Studio with the mission graph
 ```
 
-`langgraph.json` registers all four graphs so you can step through interrupts visually.
-
-## 🔌 Connect any AG-UI client (CopilotKit, …)
-
-Beyond the bundled Next.js UI, the agent is also exposed over the open
-**[AG-UI protocol](https://docs.ag-ui.com)** at **`/agui`** (via
-[`ag-ui-langgraph`](https://pypi.org/project/ag-ui-langgraph/)). AG-UI is a
-standard for streaming agent events to a frontend — and *pausing for human
-approval* is one of its first-class events, so any AG-UI client drives this
-agent's interrupt/resume flow out of the box:
-
-```ts
-// e.g. with CopilotKit / any AG-UI React client
-new HttpAgent({ url: "http://localhost:8000/agui" })
-```
-
-It's additive and optional — the bundled UI keeps using the `/agent/*` SSE
-endpoints, and if `ag-ui-langgraph` isn't installed the app still boots (the
-`/agui` endpoint is simply not mounted). Check `GET /capabilities → agui`.
-
-👉 **Runnable example:** [`examples/copilotkit`](examples/copilotkit) is a
-minimal CopilotKit chat wired to `/agui` — start the backend, then
-`cd examples/copilotkit && npm install && npm run dev`. It's standalone (its own
-`package.json`), so it doesn't affect the main `frontend/` build.
+The agent is also exposed over the open [AG-UI protocol](https://docs.ag-ui.com)
+at `/agui`, so CopilotKit-style clients can drive it, approvals included — see
+[`examples/copilotkit`](examples/copilotkit).
 
 ## 📡 API reference
 
 | Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/start` | POST | Start a research thread (`user_id` enables memory) |
-| `/resume` | POST | Resume an interrupted workflow with a choice |
-| `/stream` | GET/POST | Resume and stream progress + the final answer (SSE) |
-| `/continue` | POST | Ask a follow-up on an existing thread (keeps memory) |
-| `/history/{thread_id}` | GET | List checkpoints for time travel |
-| `/fork` | POST | Rewind to a checkpoint and resume a different path |
-| `/get_state/{thread_id}` | GET | Inspect current workflow state |
-| `/agent/start` | POST | Start/continue the agent engine (SSE) |
-| `/agent/decide` | POST | Resume the agent with `approve`/`edit`/`reject`/`respond` (SSE) |
-| `/deep/start` | POST | Start/continue the Deep Agent engine (planning + subagents, SSE) |
-| `/deep/decide` | POST | Resume the Deep Agent with a tool-approval decision (SSE) |
-| `/agui` | POST | AG-UI protocol endpoint — drive the agent from any AG-UI client |
-| `/cancel` | POST | Gracefully stop an in-flight run — progress is checkpointed and resumable |
-| `/approval/start` | POST | Draft content for a task and pause for review |
-| `/approval/decide` | POST | Resume with `approve` / `edit` / `reject` |
-| `/model/providers` | GET | Provider presets + model suggestions for the UI's model settings, and the owner's policy |
-| `/model/test` | POST | Check the model in the request's `X-LLM-*` headers with a one-word prompt (`{ok, latency_ms, sample \| error}`) |
-| `/capabilities` | GET | Which optional features are active (guardrails, MCP tools, structured output, semantic memory) — drives the UI status strip |
-| `/health` | GET | Liveness probe |
+|---|---|---|
+| `/missions` | GET | Starter missions, the seed world, and what we remember about `user_id` |
+| `/missions/start` | POST | Start a mission (`goal`, `mission_id?`, `user_id?`, `autonomy`, `ask_above`) — SSE |
+| `/missions/{id}/decide` | POST | `{decisions: {interrupt_id: decision}}` — approvals (`approve` / `edit` / `reject` / `respond`) and question answers, any subset — SSE |
+| `/missions/{id}/continue` | POST | A follow-up goal on the same thread and world — SSE |
+| `/missions/{id}/fork` | POST | Branch from a decision point (`checkpoint_id`); the approvals come back — SSE |
+| `/missions/{id}/cancel` | POST | Graceful pause; progress is saved |
+| `/missions/{id}` | GET | Current state: status, pending decisions with risk + preview, world, report |
+| `/missions/{id}/timeline` | GET | The feed so far (for reloads) |
+| `/missions/{id}/history` | GET | Decision points for time travel |
+| `/model/providers`, `/model/test` | GET, POST | Provider presets; test the model in the request's `X-LLM-*` headers |
+| `/capabilities`, `/health`, `/agui` | | |
+
+SSE events: `thread`, `token`, `tool_calls`, `tool_result`, `progress` (with option cards), `world_ops`, `report`, `guardrail`, `cancelled`, `error`, `state`, `done`.
 
 ## ⚙️ Configuration
 
-All configuration is via environment variables (see [`backend/.env.example`](backend/.env.example)).
-
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `LLM_MODEL` | Model id — `gpt-4o-mini`, `anthropic:claude-sonnet-4-5`, `anthropic/claude-sonnet-4.6` (gateway)… | mock model |
-| `LLM_PROVIDER` | Provider override (`openai`, `anthropic`, `google_genai`, `ibm`, …) | inferred |
-| `AI_GATEWAY_API_KEY` | Route through Vercel AI Gateway (any provider's models, one key) | – |
-| `LLM_BASE_URL` / `LLM_API_KEY` | Any OpenAI-compatible endpoint (OpenRouter, Groq, Ollama, vLLM…) | – |
+|---|---|---|
+| `LLM_MODEL` / `LLM_PROVIDER` / `AI_GATEWAY_API_KEY` / `LLM_BASE_URL` / `LLM_API_KEY` | The server's default model (see above) | offline pilot |
 | `LLM_TEMPERATURE` | Sampling temperature (omit for reasoning models) | provider default |
-| `LLM_CLIENT_CONFIG` / `LLM_CLIENT_CAN_USE_SERVER_KEY` / `LLM_CLIENT_ALLOW_PRIVATE_HOSTS` | Model choice from the UI: on/off, share the server key, private custom URLs | `true` / `false` / local only |
-| `USE_MOCK_LLM` | Force the offline mock model | `false` |
-| `TAVILY_API_KEY` | Enables live web search in `tools.py` | – |
-| `DATABASE_URL` (or `POSTGRES_URL`) | Postgres checkpointer + store — **required on Vercel / multi-instance** | – |
-| `CHECKPOINT_DB` | Path to enable durable SQLite persistence (single server) | in-memory |
-| `GUARDRAILS_ENABLED` | Enable the PII-redaction / blocklist middleware | `true` |
-| `GUARDRAILS_BLOCKLIST` | Comma-separated phrases the agent refuses | – |
+| `LLM_CLIENT_CONFIG` / `LLM_CLIENT_CAN_USE_SERVER_KEY` / `LLM_CLIENT_ALLOW_PRIVATE_HOSTS` | Model choice from the UI | `true` / `false` / local only |
+| `USE_MOCK_LLM` | Force the offline pilot | `false` |
+| `DATABASE_URL` (or `POSTGRES_URL`) | Postgres checkpointer + store — **required on Vercel** | – |
+| `CHECKPOINT_DB` | Durable SQLite for a single server | in-memory |
+| `HITL_RISK_CLASSIFIER` / `HITL_RISK_CONFIDENCE` | `patterns` or `jev` second opinion + confidence floor | `patterns` / `0.75` |
+| `GUARDRAILS_ENABLED` / `GUARDRAILS_REDACT_PII` / `GUARDRAILS_REDACT_EMAILS` / `GUARDRAILS_BLOCKLIST` | Guardrail middleware | `true` / `true` / `false` / – |
+| `AGENT_MODEL_CALL_LIMIT` / `AGENT_TODO_LIST` / `AGENT_FALLBACK_MODEL` | Middleware power-pack | `25` / `false` / – |
+| `EMBEDDINGS_MODEL` | Semantic memory recall | – |
 | `MCP_SERVERS` | MCP server config (inline JSON or file path) | – |
-| `AGENT_STRUCTURED_OUTPUT` | Return a typed `ResearchSummary` from the agent | `false` |
-| `EMBEDDINGS_MODEL` | Embeddings model for semantic memory recall | – |
-| `AGENT_MODEL_CALL_LIMIT` | Cap model calls per agent run (runaway/cost guard) | `25` |
-| `AGENT_TODO_LIST` | Add a `write_todos` planning tool to the agent | `false` |
-| `AGENT_FALLBACK_MODEL` | Fall back to this model on failure | – |
-| `RETRY_MAX_ATTEMPTS` | Per-node retry attempts in the workflow | `3` |
-| `NODE_TIMEOUT_SECONDS` | Per-node wall-clock timeout | off |
-| `LLM_REQUESTS_PER_SECOND` | Client-side request cap (smooths bursts on rate-limited keys) | off |
-| `RESEARCH_MAX_SUBQUERIES` | Cap parallel sub-researchers in the workflow | unclamped |
-| `HITL_INTERRUPT_MODE` | `per_call` (one interrupt per tool call, answered by id) or `batched` | `per_call` |
-| `HITL_POLICY` | `all` (every acting tool pauses) or `selective` (risky args only) | `all` |
-| `HITL_ALWAYS` / `HITL_NEVER` | Tools that always / never pause for approval | shell, delete, writes / read-only |
-| `HITL_SENSITIVE_PATTERNS` | Regex that makes a call "risky" in selective mode | passwords, keys, deletes… |
-| `HITL_RISK_CLASSIFIER` / `HITL_RISK_CONFIDENCE` | `patterns` or `jev` (TypeSafe decision model) + its confidence floor | `patterns` / `0.75` |
-| `AGENT_TOOL_RESILIENCE` | Retry transient tool errors and surface failures to the model | `true` |
-| `CORS_ORIGINS` | Comma-separated allowed origins | `*` |
-| `PORT` | Backend port | `8000` |
+| `LLM_REQUESTS_PER_SECOND` | Client-side request cap | off |
+| `CORS_ORIGINS` / `PORT` | | `*` / `8000` |
 
 ## 🐳 Docker
 
 ```bash
-cp backend/.env.example backend/.env   # configure as needed
-docker compose up --build
-# Frontend → http://localhost:3000   Backend → http://localhost:8000
+cp backend/.env.example backend/.env
+docker compose up --build       # frontend :3000, backend :8000 (SQLite volume)
 ```
 
-Compose runs the backend (with a durable SQLite checkpoint volume) and the Next.js frontend as separate services.
+## 🎨 Make it yours
 
-## 🎨 Customizing for your use case
+The simulated world is the thing to swap. Everything else — approvals, risk
+policy, time travel, UI — stays.
 
-This template ships a **research assistant** example to demonstrate the patterns. To adapt it:
+1. **Real tools.** Replace the functions in `backend/mission/tools.py` with Gmail, Google Calendar, Stripe… (or load them from MCP). Keep returning `Command(update={"world": {"ops": [...]}})` so the UI's ghosts and ledger keep working, or drop the world and just return strings.
+2. **Your risk policy.** `backend/mission/policy.py:assess()` is one function: amounts, recipients, reversibility, anything your domain cares about.
+3. **Your missions.** Add to `MISSIONS` in `backend/mission/catalog.py` (and a script in `pilot.py` if you want it to work offline).
+4. **Your look.** Design tokens live in `frontend/app/globals.css` and `tailwind.config.js`.
 
-1. **Define your state** in `backend/graph.py` (`ResearchState`).
-2. **Add nodes**, calling `interrupt(...)` wherever you need a human decision.
-3. **Wire edges** in `build_research_graph()`.
-4. **Add tools** in `backend/tools.py` and expose them to the agent.
-5. **Swap the LLM** by changing env vars — no code changes needed.
-
-Great fits: content review & approval, data-processing pipelines, quality control, configuration wizards, customer-support escalation, and any workflow needing human oversight.
-
-## 🧪 Testing
+## 🧪 Testing & evaluation
 
 ```bash
 cd backend
-USE_MOCK_LLM=true pytest -v     # fast, offline, no API keys
+USE_MOCK_LLM=true pytest -q      # API, policy, time travel, model config, guardrails — offline
+python -m evals.run_evals        # asked_before_acting, budget_respected, no_forbidden_actions… (offline OK)
+python -m evals.run_evals --langsmith   # tracked experiment (LANGSMITH_API_KEY)
 ```
 
-## 📊 Evaluation
-
-A human-in-the-loop agent must be judged on answer quality **and** on whether it
-**pauses for approval before acting**. The harness in [`backend/evals/`](backend/evals)
-scores both — deterministic metrics (`paused_for_approval`, `completed`,
-`no_pii_leak`) run offline with no keys, and an LLM-as-judge `correctness` metric
-kicks in with a real model:
-
-```bash
-cd backend
-python -m evals.run_evals               # prints a scored table (offline OK)
-python -m evals.run_evals --langsmith   # tracked experiment (needs LANGSMITH_API_KEY)
-```
-
-See **[docs/EVALUATION.md](docs/EVALUATION.md)** to add your own examples and
-evaluators, or gate CI on `paused_for_approval == 1.0`.
+See [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ## 📁 Project structure
 
 ```
-langgraph-interrupt-workflow-template/
 ├── backend/
-│   ├── main.py                # FastAPI app (lifespan-managed graphs, SSE streaming)
-│   ├── graph.py               # Multi-step human-in-the-loop research workflow
-│   ├── approval_workflow.py   # Approve / edit / reject workflow
-│   ├── agent.py               # create_agent + HITL + guardrails + structured output
-│   ├── deep_agent.py          # Deep Agent engine (planning + researcher/critic subagents)
-│   ├── agui.py                # AG-UI protocol adapter (mounts /agui)
-│   ├── run_control.py         # Graceful cancel (cooperative drain) for in-flight runs
-│   ├── approval_policy.py     # Which tool calls pause, and when (regex / Jev risk gate)
-│   ├── persistence.py         # Postgres / SQLite / in-memory checkpointer + store
-│   ├── vercel.json            # Vercel function config (SSE maxDuration)
-│   ├── guardrails.py          # PII-redaction / blocklist middleware
-│   ├── middleware_pack.py     # Prebuilt middleware (summarization, limits, retry, todos)
-│   ├── mcp_tools.py           # Optional Model Context Protocol tool loader
-│   ├── memory.py              # Cross-thread long-term memory (Store, semantic-ready)
-│   ├── llm.py                 # Provider-agnostic LLM factory + offline mock model
-│   ├── tools.py               # Example web_search tool (Tavily / mock)
-│   ├── evals/                 # Evaluation harness (dataset + evaluators + runner)
-│   ├── test_main.py           # Pytest suite
-│   ├── requirements.txt
-│   └── .env.example
-├── frontend/                  # Next.js 15 + React 19 UI
-│   ├── app/page.tsx           # Research assistant chat
-│   ├── app/approval/page.tsx  # Approve / edit / reject UI
-│   └── Dockerfile
-├── docs/DEPLOYMENT.md         # Docker / LangGraph Platform / Postgres deploy guide
-├── .devcontainer/             # GitHub Codespaces / VS Code dev container
-├── langgraph.json             # LangGraph Studio config (research + approval + agent + deep_agent)
-├── .github/workflows/ci.yml
-├── Dockerfile                 # Backend image
-├── docker-compose.yml         # Backend + frontend services
-└── README.md
+│   ├── main.py                 # FastAPI: /missions/*, /model/*, /capabilities, SSE
+│   ├── mission/
+│   │   ├── agent.py            # create_agent + HITL + BYO-model + guardrails; stream, fork, history
+│   │   ├── policy.py           # risk assessment, autonomy, previews → InterruptOnConfig.when
+│   │   ├── tools.py            # reading + acting tools (Command world updates), ask_user, remember
+│   │   ├── world.py            # the simulated world: seed data + reducer
+│   │   ├── catalog.py          # restaurants, flights, hotels, quotes; starter missions
+│   │   └── pilot.py            # scripted offline model that flies the starter missions
+│   ├── client_model.py         # model settings from the UI (X-LLM-* headers, per request)
+│   ├── llm.py                  # provider-agnostic model factory + mock
+│   ├── persistence.py          # Postgres / SQLite / in-memory
+│   ├── approval_policy.py      # Jev / regex risk classifiers
+│   ├── guardrails.py · middleware_pack.py · run_control.py · memory.py · mcp_tools.py · agui.py
+│   ├── evals/                  # dataset + evaluators + runner
+│   └── test_main.py · test_infra.py · test_evals.py
+├── frontend/
+│   ├── app/page.tsx            # header, gallery ↔ workspace
+│   ├── components/             # Gallery, Workspace, Feed, ApprovalCard, QuestionCard, WorldPanel, MissionPanel, ModelSettings
+│   └── lib/                    # api.ts (types, SSE, vocabulary), useMission.ts (state machine), modelSettings.ts
+├── docs/ · examples/copilotkit · scripts/record_demo.py · langgraph.json · docker-compose.yml
 ```
 
-## 🤝 Contributing
+## 🤝 Contributing · 📝 License
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md). Fork → branch → PR.
-
-## 📝 License
-
-MIT — see [LICENSE](LICENSE).
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). MIT — see [LICENSE](LICENSE).
 
 ## 🔗 Resources
 
-- [LangGraph docs](https://docs.langchain.com/oss/python/langgraph/overview) · [What's new in v1](https://docs.langchain.com/oss/python/releases/langgraph-v1)
-- [Human-in-the-loop guide](https://docs.langchain.com/oss/python/langchain/human-in-the-loop)
-- [`create_agent`](https://docs.langchain.com/oss/python/langchain/agents) · [FastAPI](https://fastapi.tiangolo.com/) · [Next.js](https://nextjs.org/docs)
+- [LangGraph docs](https://docs.langchain.com/oss/python/langgraph/overview) · [Human-in-the-loop guide](https://docs.langchain.com/oss/python/langchain/human-in-the-loop)
+- [LangGraph time travel](https://docs.langchain.com/oss/python/langgraph/use-time-travel) · [AG-UI](https://docs.ag-ui.com) · [Model Context Protocol](https://modelcontextprotocol.io)

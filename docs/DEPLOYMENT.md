@@ -36,8 +36,8 @@ unset to run the offline mock.
 
 ## 2. LangGraph Platform / `langgraph dev`
 
-The repo ships a `langgraph.json` registering all three graphs
-(`research`, `approval`, `agent`), so it works with LangGraph's tooling out of
+The repo ships a `langgraph.json` registering the mission graph
+(`mission`), so it works with LangGraph's tooling out of
 the box:
 
 ```bash
