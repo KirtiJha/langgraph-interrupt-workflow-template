@@ -5,7 +5,7 @@ standard for streaming agent events to a frontend. Its flagship capability is
 *pausing mid-run to ask a human for approval* — exactly this template's thesis —
 so exposing the agent over AG-UI lets it plug into any AG-UI client (e.g.
 [CopilotKit](https://www.copilotkit.ai), or React/Vue/Angular AG-UI widgets)
-**without changing the bundled Next.js UI**, which keeps using the ``/agent/*``
+**without changing the bundled Next.js UI**, which keeps using the ``/missions/*``
 SSE endpoints.
 
 This is additive and optional: if ``ag-ui-langgraph`` isn't installed, the app
@@ -18,7 +18,7 @@ import logging
 
 from langgraph.checkpoint.memory import MemorySaver
 
-from agent import build_agent
+from mission.agent import build_mission_agent
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def bind_persistence(checkpointer, store=None) -> None:
     """
     if _AGENT is None:
         return
-    _AGENT.graph = build_agent(checkpointer=checkpointer, store=store, interrupt_mode="batched")
+    _AGENT.graph = build_mission_agent(checkpointer=checkpointer, store=store)
 
 
 def mount_agui(app, store=None) -> bool:
@@ -57,21 +57,16 @@ def mount_agui(app, store=None) -> bool:
 
     Returns ``True`` when mounted, ``False`` when the adapter isn't installed.
     Uses a dedicated agent instance so AG-UI runs are independent of the
-    ``/agent/*`` SSE endpoints; see :func:`bind_persistence`.
+    ``/missions/*`` SSE endpoints; see :func:`bind_persistence`.
     """
     global _AGENT
     if not AGUI_AVAILABLE:
         return False
     try:
-        # The AG-UI adapter was written against the one-interrupt-per-turn
-        # (batched) HITL shape, so pin it here regardless of HITL_INTERRUPT_MODE.
-        graph = build_agent(checkpointer=MemorySaver(), store=store, interrupt_mode="batched")
+        graph = build_mission_agent(checkpointer=MemorySaver(), store=store)
         agent = LangGraphAgent(
-            name="research_agent",
-            description=(
-                "Human-in-the-loop research agent — pauses for approval before "
-                "running tools."
-            ),
+            name="mission_control",
+            description="Personal agent that acts on your inbox, calendar and wallet — pauses for approval first.",
             graph=graph,
         )
         add_langgraph_fastapi_endpoint(app, agent, path=AGUI_PATH)

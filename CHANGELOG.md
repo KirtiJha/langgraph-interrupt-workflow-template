@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The template is now Mission Control.** The research assistant (workflow,
+  agent, Deep Agent and approval-workflow engines) is replaced by one personal
+  agent that acts on a simulated world — inbox, calendar, wallet, contacts,
+  subscriptions, bookings — and asks before anything that matters.
+  - `backend/mission/`: the world lives in graph state (checkpointed, rewinds,
+    forks); acting tools return `Command` updates; a risk policy scores each
+    action against the world and the user's autonomy level (careful / balanced /
+    autopilot) and gives the approval card reasons and a preview; `ask_user`
+    shows a raw `interrupt()`; `remember` writes long-term memory; a scripted
+    offline pilot flies five starter missions and reacts to rejections, edits
+    and answers.
+  - `/missions/*` endpoints replace `/start`, `/agent/*`, `/deep/*` and
+    `/approval/*`: start, decide (any subset of pending approvals and
+    questions), continue, fork (branch from a decision point), cancel, state,
+    timeline, history.
+  - A new UI: mission gallery with an autonomy picker, a workspace with the
+    live feed, decision tray (approve / edit / reject / reply, hotkeys), your
+    world with pending actions drawn as ghosts, a live checklist, meters, and a
+    time-travel scrubber. Reload resumes the open mission.
+  - Evals rewritten around missions: `asked_before_acting`, `budget_respected`,
+    `no_forbidden_actions`, `used_expected_tools`, plus an LLM judge.
+  - Guardrails no longer mask email addresses by default
+    (`GUARDRAILS_REDACT_EMAILS`); cards, SSNs and phones still are.
+- `deepagents` is no longer a dependency.
+
 ### Added
 - **Model settings in the UI** (`frontend/components/ModelSettings.tsx`,
   `backend/client_model.py`): choose the provider, model, key, base URL and

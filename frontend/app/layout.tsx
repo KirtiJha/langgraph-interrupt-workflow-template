@@ -1,26 +1,21 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "AI Research Assistant",
-  description: "Intelligent research with interactive guidance using LangGraph",
+  title: "Mission Control",
+  description: "A personal agent that gets real-life jobs done — and asks before anything that matters.",
 };
 
-// Mobile: use the real device width, allow pinch-zoom (a11y), tint the chrome.
 export const viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#4f46e5",
+  themeColor: "#faf8f3",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="min-h-[100dvh]">{children}</body>
     </html>
   );
 }

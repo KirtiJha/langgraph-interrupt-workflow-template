@@ -11,7 +11,6 @@ psycopg[binary,pool]>=3.2
 
 # Deep Agent engine (planning + subagents). Optional — the app boots without it,
 # with the Deep Agent engine disabled.
-deepagents>=0.7,<1
 
 # AG-UI protocol adapter — exposes the agent to any AG-UI client (CopilotKit,
 # etc.) at /agui. Optional — the app boots without it (endpoint just not mounted).
