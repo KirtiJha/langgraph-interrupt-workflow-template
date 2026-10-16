@@ -1,4 +1,4 @@
-"""Tests for the evaluation harness (offline, mock model)."""
+"""Tests for the evaluation harness (offline, scripted pilot)."""
 
 import os
 
@@ -6,50 +6,37 @@ os.environ.setdefault("USE_MOCK_LLM", "true")
 
 from evals.dataset import DATASET
 from evals.run_evals import (
+    asked_before_acting,
+    budget_respected,
     completed,
     evaluate_local,
+    no_forbidden_actions,
     no_pii_leak,
-    paused_for_approval,
 )
 
 
-# --- Evaluator unit tests (deterministic, no agent run) ---------------------
-def test_paused_for_approval_scoring():
-    ex = {"expects_tool": "web_search"}
-    assert paused_for_approval(ex, {"paused": True, "tool": "web_search"}) == 1.0
-    assert paused_for_approval(ex, {"paused": False, "tool": None}) == 0.0
-    assert paused_for_approval(ex, {"paused": True, "tool": "other"}) == 0.0
+def test_evaluator_scoring():
+    ex = {"expects_tools": ["book"], "forbidden": [{"tool": "book", "arg": "vendor", "contains": "Brasa"}],
+          "budget": 100}
+    ok = {"asked": ["c1"], "executed": [{"id": "c1", "name": "book", "args": {"vendor": "Olive"}}],
+          "report": {"summary": "done"}, "spent": 50, "closing": "clean"}
+    assert asked_before_acting(ex, ok) == 1.0
+    assert asked_before_acting(ex, {**ok, "asked": []}) == 0.0
+    assert completed(ex, ok) == 1.0 and completed(ex, {**ok, "report": None}) == 0.0
+    assert no_forbidden_actions(ex, ok) == 1.0
+    assert no_forbidden_actions(ex, {**ok, "executed": [{"id": "c1", "name": "book", "args": {"vendor": "Brasa"}}]}) == 0.0
+    assert budget_respected(ex, ok) == 1.0 and budget_respected(ex, {**ok, "spent": 150}) == 0.0
+    assert no_pii_leak(ex, ok) == 1.0 and no_pii_leak(ex, {**ok, "closing": "mail a@b.com"}) == 0.0
 
 
-def test_completed_scoring():
-    assert completed({}, {"answer": "an answer", "error": None}) == 1.0
-    assert completed({}, {"answer": "", "error": None}) == 0.0
-    assert completed({}, {"answer": "x", "error": "boom"}) == 0.0
-
-
-def test_no_pii_leak_scoring():
-    assert no_pii_leak({}, {"answer": "clean answer with no PII"}) == 1.0
-    assert no_pii_leak({}, {"answer": "reach me at a@b.com"}) == 0.0
-
-
-# --- Integration: run the agent through the harness offline -----------------
-def test_evaluate_local_offline():
-    report = evaluate_local(limit=2)
-    assert report["n"] == 2
-    # The agent should pause for approval and complete on every example.
-    assert report["summary"]["paused_for_approval"] == 1.0
-    assert report["summary"]["completed"] == 1.0
-    assert report["summary"]["no_pii_leak"] == 1.0
-    # The LLM-judge metric is skipped on the mock model.
-    assert "correctness" not in report["summary"]
+def test_every_starter_mission_scores_perfectly_offline():
+    report = evaluate_local()
+    assert report["n"] == len(DATASET)
+    for metric, value in report["summary"].items():
+        assert value == 1.0, (metric, report["results"])
+    assert "report_quality" not in report["summary"]  # judge skipped on the pilot
 
 
 def test_dataset_is_well_formed():
     for ex in DATASET:
-        assert ex["question"] and ex["reference"] and ex["expects_tool"]
-
-
-if __name__ == "__main__":
-    import pytest
-
-    pytest.main([__file__, "-v"])
+        assert ex["goal"] and ex["reference"] and ex["expects_tools"]
