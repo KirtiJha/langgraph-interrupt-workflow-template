@@ -30,8 +30,19 @@ def _namespace(user_id: str) -> tuple[str, str]:
     return ("memories", user_id)
 
 
+def index_config() -> Optional[dict]:
+    """Vector-index config for semantic memory, or ``None`` when not configured."""
+    embeddings_model = os.getenv("EMBEDDINGS_MODEL", "").strip()
+    if not embeddings_model:
+        return None
+    dims = int(os.getenv("EMBEDDING_DIMS", _DEFAULT_EMBEDDING_DIMS))
+    # ``embed`` accepts a provider string; LangGraph resolves it via
+    # ``init_embeddings`` and only indexes the "text" field.
+    return {"dims": dims, "embed": embeddings_model, "fields": ["text"]}
+
+
 def build_store() -> BaseStore:
-    """Create the long-term memory store, with semantic search when possible.
+    """Create the in-memory long-term memory store, semantic when possible.
 
     If ``EMBEDDINGS_MODEL`` is set (e.g. ``openai:text-embedding-3-small``) and
     the matching provider credentials are available, the store is built with a
@@ -39,18 +50,14 @@ def build_store() -> BaseStore:
     memories for the current question. Otherwise it falls back to a plain store
     (recency-ordered recall) so the zero-config demo still works offline.
 
-    Swap ``InMemoryStore`` for a Postgres-backed store in production.
+    With ``DATABASE_URL`` set, ``persistence.open_postgres`` provides a
+    Postgres-backed store instead (same index config).
     """
-    embeddings_model = os.getenv("EMBEDDINGS_MODEL", "").strip()
-    if embeddings_model:
+    index = index_config()
+    if index:
         try:
-            dims = int(os.getenv("EMBEDDING_DIMS", _DEFAULT_EMBEDDING_DIMS))
-            # ``embed`` accepts a provider string; LangGraph resolves it via
-            # ``init_embeddings`` and only indexes the "text" field.
-            store = InMemoryStore(
-                index={"dims": dims, "embed": embeddings_model, "fields": ["text"]}
-            )
-            logger.info("Semantic memory enabled (embeddings=%s, dims=%d)", embeddings_model, dims)
+            store = InMemoryStore(index=index)
+            logger.info("Semantic memory enabled (embeddings=%s, dims=%d)", index["embed"], index["dims"])
             return store
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(

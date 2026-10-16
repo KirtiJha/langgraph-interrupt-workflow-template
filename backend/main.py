@@ -18,7 +18,7 @@ import json
 import logging
 import os
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -36,14 +36,16 @@ from agent import (
     structured_output_enabled,
 )
 from agui import AGUI_AVAILABLE, AGUI_PATH, mount_agui
+from agui import bind_persistence as agui_bind_persistence
 from approval_workflow import build_approval_graph
 from graph import build_research_graph, resilience_config, stream_research_response
 from guardrails import GuardrailMiddleware
 import approval_policy
+import persistence
 import run_control
-from llm import requests_per_second, using_mock_llm
+from llm import model_status, requests_per_second, using_mock_llm
 from mcp_tools import load_mcp_tools
-from memory import build_store, load_user_memory, save_user_memory
+from memory import build_store, index_config, load_user_memory, save_user_memory
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -68,10 +70,11 @@ def _capabilities(store, mcp_tools) -> dict:
     guardrail = GuardrailMiddleware.from_env()
     return {
         "model": {
-            "mock": using_mock_llm(),
-            "name": None if using_mock_llm() else os.getenv("LLM_MODEL", "gpt-4o-mini"),
+            # mock / name / provider / via / endpoint host / error — never the key.
+            **model_status(),
             "requests_per_second": requests_per_second(),
         },
+        "persistence": persistence.describe(),
         "guardrails": {
             "enabled": guardrail is not None,
             "redact_pii": bool(guardrail and guardrail.redact_pii),
@@ -105,40 +108,41 @@ def _capabilities(store, mcp_tools) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Compile the graphs with a checkpointer (+ store for long-term memory)."""
-    # Cross-thread long-term memory, with semantic search when embeddings are
-    # configured (see memory.build_store). Swap for a Postgres store in prod.
-    store = build_store()
-    app.state.store = store
+    """Compile the graphs on the configured checkpointer + store.
 
+    Postgres (``DATABASE_URL``/``POSTGRES_URL``) → durable and shared across
+    serverless instances (required on Vercel). ``CHECKPOINT_DB`` → durable
+    SQLite on a single server. Otherwise in-memory. See ``persistence.py``.
+    """
     # Optional MCP tools — empty unless MCP_SERVERS is configured (see mcp_tools).
     mcp_tools = await load_mcp_tools()
 
-    app.state.capabilities = _capabilities(store, mcp_tools)
+    async with AsyncExitStack() as stack:
+        mode = persistence.persistence_mode()
+        if mode == "postgres":
+            saver, store = await stack.enter_async_context(
+                persistence.open_postgres(persistence.database_url(), index=index_config())
+            )
+        elif mode == "sqlite":
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-    def _build_agent(saver):
-        return build_agent(checkpointer=saver, store=store, extra_tools=mcp_tools)
+            checkpoint_db = os.getenv("CHECKPOINT_DB")
+            logger.info("Using durable AsyncSqliteSaver at %s", checkpoint_db)
+            saver = await stack.enter_async_context(AsyncSqliteSaver.from_conn_string(checkpoint_db))
+            store = build_store()
+        else:
+            logger.info("Using in-memory MemorySaver (set DATABASE_URL or CHECKPOINT_DB for durability)")
+            saver, store = MemorySaver(), build_store()
 
-    checkpoint_db = os.getenv("CHECKPOINT_DB")
-    if checkpoint_db:
-        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
-        logger.info("Using durable AsyncSqliteSaver at %s", checkpoint_db)
-        async with AsyncSqliteSaver.from_conn_string(checkpoint_db) as saver:
-            app.state.graph = build_research_graph(checkpointer=saver, store=store)
-            app.state.approval_graph = build_approval_graph(checkpointer=saver)
-            app.state.agent_graph = _build_agent(saver)
-            if DEEP_AGENT_ENABLED:
-                app.state.deep_agent = build_deep_agent(checkpointer=saver, store=store)
-            yield
-    else:
-        logger.info("Using in-memory MemorySaver (set CHECKPOINT_DB for durability)")
-        saver = MemorySaver()
+        # Cross-thread long-term memory (semantic when EMBEDDINGS_MODEL is set).
+        app.state.store = store
+        app.state.capabilities = _capabilities(store, mcp_tools)
         app.state.graph = build_research_graph(checkpointer=saver, store=store)
         app.state.approval_graph = build_approval_graph(checkpointer=saver)
-        app.state.agent_graph = _build_agent(saver)
+        app.state.agent_graph = build_agent(checkpointer=saver, store=store, extra_tools=mcp_tools)
         if DEEP_AGENT_ENABLED:
             app.state.deep_agent = build_deep_agent(checkpointer=saver, store=store)
+        agui_bind_persistence(saver, store)
         yield
 
 
@@ -324,11 +328,32 @@ async def cancel_run(data: CancelRequest):
     return {"cancelled": True, "thread_id": data.thread_id, "reason": data.reason}
 
 
+async def _require_thread(graph, thread_id: str) -> None:
+    """404 (not an opaque 500) when a thread to resume doesn't exist.
+
+    With in-memory state this usually means the server restarted or — on a
+    serverless host — the request reached a different instance than the one
+    that paused the run, so say how to fix it.
+    """
+    state = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+    if state.values:
+        return
+    hint = (
+        " This server keeps run state in memory, so a restart — or, on a serverless "
+        "host like Vercel, reaching a different instance — loses paused runs. Set "
+        "DATABASE_URL (Postgres) for durable, multi-instance state."
+        if persistence.persistence_mode() == "memory"
+        else ""
+    )
+    raise HTTPException(status_code=404, detail=f"Thread '{thread_id}' not found.{hint}")
+
+
 @app.post("/resume")
 async def resume_research(data: ResumeInput, request: Request):
     """Resume an interrupted conversation with the user's choice."""
     graph = request.app.state.graph
     config = {"configurable": {"thread_id": data.thread_id}}
+    await _require_thread(graph, data.thread_id)
     try:
         result = await graph.ainvoke(Command(resume=data.choice), config)
         state = await graph.aget_state(config)
@@ -434,6 +459,7 @@ async def approval_decide(data: ApprovalDecision, request: Request):
     """Resume the approval workflow with approve / edit / reject."""
     graph = request.app.state.approval_graph
     config = {"configurable": {"thread_id": data.thread_id}}
+    await _require_thread(graph, data.thread_id)
 
     action = data.action.lower()
     resume_value: dict = {"action": action}
@@ -469,12 +495,14 @@ def _stream_response(
 @app.post("/stream")
 async def stream_research(data: ResumeInput, request: Request):
     """Resume and stream progress + the final response (SSE)."""
+    await _require_thread(request.app.state.graph, data.thread_id)
     return _stream_response(request.app.state.graph, data.thread_id, data.choice)
 
 
 @app.get("/stream")
 async def stream_research_get(thread_id: str, choice: str, request: Request):
     """Resume and stream via GET (for EventSource)."""
+    await _require_thread(request.app.state.graph, thread_id)
     return _stream_response(request.app.state.graph, thread_id, choice)
 
 
@@ -528,6 +556,7 @@ async def agent_decide(data: AgentDecision, request: Request):
     """Resume the agent with approve / edit / reject / respond decisions."""
     graph = request.app.state.agent_graph
     config = {"configurable": {"thread_id": data.thread_id}}
+    await _require_thread(graph, data.thread_id)
     command = _resume_command(data.decisions)
     return _sse(stream_agent_response(graph, data.thread_id, command, config))
 
@@ -583,6 +612,7 @@ async def deep_decide(data: AgentDecision, request: Request):
     if graph is None:
         raise HTTPException(status_code=503, detail="Deep Agent engine is not available.")
     config = {"configurable": {"thread_id": data.thread_id}}
+    await _require_thread(graph, data.thread_id)
     command = _resume_command(data.decisions)
     return _sse(stream_agent_response(graph, data.thread_id, command, config))
 

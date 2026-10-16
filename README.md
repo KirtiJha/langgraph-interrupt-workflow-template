@@ -63,9 +63,10 @@ All three share the same provider-agnostic LLM, `web_search` tool, and long-term
 - **🚦 Rate-limit friendly** — a client-side request cap plus a parallelism cap, so free/low-tier provider keys don't get throttled into 429 stalls.
 - **🎯 Approval policy, not approve-everything** — one env-configurable rule for *which* tools pause and *when*: gate shell/delete/writes always, exempt read-only tools, and (optionally) pause other calls **only when their arguments look risky**.
 - **🧾 Schema-validated, per-call approvals** — each tool call interrupts on its own with a JSON `response_schema`; the approval form is generated from the tool's real argument schema and edits are validated before the agent resumes.
-- **🔌 Provider-agnostic** — OpenAI, Anthropic, Google, Groq, Mistral, IBM watsonx, Ollama… via LangChain's `init_chat_model`. One env var to switch.
+- **🔌 Any provider, any model** — OpenAI, Anthropic, Google natively; **Vercel AI Gateway** (one key, every provider's models); or **any OpenAI-compatible endpoint** (OpenRouter, Groq, Together, DeepSeek, Ollama, vLLM…). A misconfigured model is shown as an error in the UI, never silently swapped for the mock.
 - **🆓 Zero-config demo** — a streaming-capable mock model runs the whole app with **no API keys**.
-- **💾 Durable execution** — optional `AsyncSqliteSaver` checkpointer; workflows survive server restarts.
+- **💾 Durable, multi-instance execution** — set `DATABASE_URL` and paused runs + memory live in **Postgres**, so a run paused on one serverless instance resumes on another (tested in CI against real Postgres); SQLite for a single server.
+- **▲ One-click Vercel deploy** — Next.js frontend + zero-config FastAPI backend, with Neon Postgres from the Vercel Marketplace.
 - **🤖 Latest agent stack** — LangGraph **v1.2** + LangChain **v1**, `create_agent`, and `HumanInTheLoopMiddleware`.
 - **📡 Streaming** — Server-Sent Events stream progress *and* the final answer to the UI.
 - **🔭 LangGraph Studio ready** — `langgraph.json` registers all graphs for `langgraph dev`.
@@ -105,17 +106,69 @@ npm run dev                     # http://localhost:3000
 
 Open http://localhost:3000, ask a question, and watch the workflow pause for your input at each interrupt.
 
-### Use a real LLM
+### Use a real LLM — any provider, any model
 
-Edit `backend/.env` and set a model + matching API key:
+Uncomment **one** option in `backend/.env`:
 
 ```env
-LLM_MODEL=gpt-4o-mini
-OPENAI_API_KEY=sk-...
-# or: LLM_MODEL=claude-sonnet-4-5  LLM_PROVIDER=anthropic  ANTHROPIC_API_KEY=...
+# 1) Vercel AI Gateway — one key, models from every provider
+AI_GATEWAY_API_KEY=...
+LLM_MODEL=anthropic/claude-sonnet-4.6        # or openai/gpt-5, google/gemini-2.5-pro, xai/grok-4…
+
+# 2) A provider's native API ("provider:model", or set LLM_PROVIDER)
+LLM_MODEL=anthropic:claude-sonnet-4-5        # + ANTHROPIC_API_KEY
+LLM_MODEL=gpt-4o-mini                        # + OPENAI_API_KEY
+LLM_MODEL=google_genai:gemini-2.5-flash      # + GOOGLE_API_KEY
+
+# 3) ANY OpenAI-compatible endpoint — OpenRouter, Groq, Together, DeepSeek, Ollama, vLLM, LM Studio…
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_API_KEY=...
+LLM_MODEL=meta-llama/llama-3.3-70b-instruct
 ```
 
-That's it — the workflow and agent automatically use it.
+OpenAI, Anthropic and Google SDKs ship by default; option 3 covers essentially
+everything else without another dependency. The header's model badge shows what
+is *actually* running — and if a configured model fails to load, it turns red
+with the reason instead of silently falling back to the mock.
+
+## ▲ Deploy to Vercel
+
+The app deploys as **two Vercel projects from this one repo** — the Next.js
+`frontend/` and the FastAPI `backend/` (Vercel runs FastAPI zero-config, with
+SSE streaming and lifespan support).
+
+> **A database is required on Vercel.** Serverless requests can land on
+> different instances, so a run paused by one request must be resumable by
+> another. Set `DATABASE_URL` and the backend switches to a **Postgres**
+> checkpointer + memory store automatically. Without it, resumes fail with a
+> clear 404 explaining exactly this. (Verified in CI: a run paused on one app
+> instance is resumed by a fresh one.)
+
+**1. Backend** — [vercel.com/new](https://vercel.com/new) → import this repo →
+**Root Directory: `backend`** → Deploy. Then in the project:
+
+- **Storage → Create Database → Neon (Postgres)** and connect it — this sets
+  `DATABASE_URL`. Tables are created on first boot.
+- **Settings → Environment Variables** — your model (any option above), e.g.
+  `AI_GATEWAY_API_KEY` + `LLM_MODEL`, and later `CORS_ORIGINS` = your frontend URL.
+- Redeploy. Check `https://<backend>.vercel.app/capabilities` →
+  `"persistence": {"checkpointer": "postgres"}` and your model name.
+
+**2. Frontend** — import the repo again → **Root Directory: `frontend`** → set
+`NEXT_PUBLIC_API_URL=https://<backend>.vercel.app` → Deploy.
+
+Or start from a fresh copy of each half:
+
+[![Deploy backend](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FKirtiJha%2Flanggraph-interrupt-workflow-template%2Ftree%2Fmain%2Fbackend&project-name=hitl-backend&repository-name=hitl-backend&env=AI_GATEWAY_API_KEY,LLM_MODEL&envDescription=Any%20model%3A%20set%20AI_GATEWAY_API_KEY%20%2B%20LLM_MODEL%20(e.g.%20anthropic%2Fclaude-sonnet-4.6).%20Then%20add%20a%20Neon%20database%20from%20the%20Storage%20tab.&envLink=https%3A%2F%2Fgithub.com%2FKirtiJha%2Flanggraph-interrupt-workflow-template%23use-a-real-llm--any-provider-any-model)
+[![Deploy frontend](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FKirtiJha%2Flanggraph-interrupt-workflow-template%2Ftree%2Fmain%2Ffrontend&project-name=hitl-frontend&repository-name=hitl-frontend&env=NEXT_PUBLIC_API_URL&envDescription=URL%20of%20your%20deployed%20backend%2C%20e.g.%20https%3A%2F%2Fhitl-backend.vercel.app)
+
+Good to know on serverless:
+- Runs stream for up to **300s** (`backend/vercel.json`; up to 800s on Pro).
+- **Stop** is best-effort across instances: a cancel that reaches a different
+  instance than the running stream can't drain it (the run still finishes and
+  stays resumable). The client-side rate limit is per instance.
+- Paused runs, history/time-travel and long-term memory all live in Postgres,
+  so they survive redeploys.
 
 ## 🧠 How interrupts work
 
@@ -418,12 +471,15 @@ All configuration is via environment variables (see [`backend/.env.example`](bac
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LLM_MODEL` | Model id (e.g. `gpt-4o-mini`) | mock model |
-| `LLM_PROVIDER` | Provider override (`openai`, `anthropic`, `ibm`, …) | inferred |
-| `LLM_TEMPERATURE` | Sampling temperature | `0.7` |
+| `LLM_MODEL` | Model id — `gpt-4o-mini`, `anthropic:claude-sonnet-4-5`, `anthropic/claude-sonnet-4.6` (gateway)… | mock model |
+| `LLM_PROVIDER` | Provider override (`openai`, `anthropic`, `google_genai`, `ibm`, …) | inferred |
+| `AI_GATEWAY_API_KEY` | Route through Vercel AI Gateway (any provider's models, one key) | – |
+| `LLM_BASE_URL` / `LLM_API_KEY` | Any OpenAI-compatible endpoint (OpenRouter, Groq, Ollama, vLLM…) | – |
+| `LLM_TEMPERATURE` | Sampling temperature (omit for reasoning models) | provider default |
 | `USE_MOCK_LLM` | Force the offline mock model | `false` |
 | `TAVILY_API_KEY` | Enables live web search in `tools.py` | – |
-| `CHECKPOINT_DB` | Path to enable durable SQLite persistence | in-memory |
+| `DATABASE_URL` (or `POSTGRES_URL`) | Postgres checkpointer + store — **required on Vercel / multi-instance** | – |
+| `CHECKPOINT_DB` | Path to enable durable SQLite persistence (single server) | in-memory |
 | `GUARDRAILS_ENABLED` | Enable the PII-redaction / blocklist middleware | `true` |
 | `GUARDRAILS_BLOCKLIST` | Comma-separated phrases the agent refuses | – |
 | `MCP_SERVERS` | MCP server config (inline JSON or file path) | – |
@@ -440,6 +496,7 @@ All configuration is via environment variables (see [`backend/.env.example`](bac
 | `HITL_POLICY` | `all` (every acting tool pauses) or `selective` (risky args only) | `all` |
 | `HITL_ALWAYS` / `HITL_NEVER` | Tools that always / never pause for approval | shell, delete, writes / read-only |
 | `HITL_SENSITIVE_PATTERNS` | Regex that makes a call "risky" in selective mode | passwords, keys, deletes… |
+| `HITL_RISK_CLASSIFIER` / `HITL_RISK_CONFIDENCE` | `patterns` or `jev` (TypeSafe decision model) + its confidence floor | `patterns` / `0.75` |
 | `AGENT_TOOL_RESILIENCE` | Retry transient tool errors and surface failures to the model | `true` |
 | `CORS_ORIGINS` | Comma-separated allowed origins | `*` |
 | `PORT` | Backend port | `8000` |
@@ -502,6 +559,9 @@ langgraph-interrupt-workflow-template/
 │   ├── deep_agent.py          # Deep Agent engine (planning + researcher/critic subagents)
 │   ├── agui.py                # AG-UI protocol adapter (mounts /agui)
 │   ├── run_control.py         # Graceful cancel (cooperative drain) for in-flight runs
+│   ├── approval_policy.py     # Which tool calls pause, and when (regex / Jev risk gate)
+│   ├── persistence.py         # Postgres / SQLite / in-memory checkpointer + store
+│   ├── vercel.json            # Vercel function config (SSE maxDuration)
 │   ├── guardrails.py          # PII-redaction / blocklist middleware
 │   ├── middleware_pack.py     # Prebuilt middleware (summarization, limits, retry, todos)
 │   ├── mcp_tools.py           # Optional Model Context Protocol tool loader

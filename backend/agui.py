@@ -35,13 +35,31 @@ except Exception as exc:  # pragma: no cover - only when ag-ui-langgraph is miss
     AGUI_AVAILABLE = False
 
 
+# The mounted AG-UI agent, so the app lifespan can swap in a durable graph.
+_AGENT = None
+
+
+def bind_persistence(checkpointer, store=None) -> None:
+    """Rebuild the AG-UI agent's graph on the app's durable checkpointer.
+
+    The endpoint must be mounted at import time (route registration), before the
+    lifespan opens the database — so it starts on an in-memory checkpointer and
+    is re-pointed here. Without this, AG-UI pauses wouldn't survive across
+    serverless instances.
+    """
+    if _AGENT is None:
+        return
+    _AGENT.graph = build_agent(checkpointer=checkpointer, store=store, interrupt_mode="batched")
+
+
 def mount_agui(app, store=None) -> bool:
     """Mount the AG-UI endpoint on ``app`` at :data:`AGUI_PATH`.
 
     Returns ``True`` when mounted, ``False`` when the adapter isn't installed.
-    Uses a dedicated agent instance with its own checkpointer so AG-UI runs are
-    independent of the ``/agent/*`` SSE endpoints.
+    Uses a dedicated agent instance so AG-UI runs are independent of the
+    ``/agent/*`` SSE endpoints; see :func:`bind_persistence`.
     """
+    global _AGENT
     if not AGUI_AVAILABLE:
         return False
     try:
@@ -57,6 +75,7 @@ def mount_agui(app, store=None) -> bool:
             graph=graph,
         )
         add_langgraph_fastapi_endpoint(app, agent, path=AGUI_PATH)
+        _AGENT = agent
         logger.info("AG-UI endpoint mounted at %s", AGUI_PATH)
         return True
     except Exception as exc:  # pragma: no cover - defensive

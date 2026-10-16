@@ -55,36 +55,46 @@ environment variables (`LLM_MODEL`, provider keys, `GUARDRAILS_*`, `MCP_SERVERS`
 
 ## 3. Self-hosted, scalable (Postgres-backed)
 
-For horizontal scaling, move both persistence layers to Postgres so any replica
-can resume any thread and read shared memory.
+For horizontal scaling, keep both persistence layers in Postgres so any replica
+can resume any thread and read shared memory. This is **built in** — no code
+changes — just set a connection string:
 
-Install the Postgres backends:
-
-```bash
-pip install langgraph-checkpoint-postgres langgraph-store-postgres psycopg
+```env
+DATABASE_URL=postgresql://user:pass@host:5432/db     # POSTGRES_URL also works
 ```
 
-Then swap the in-memory pieces for their Postgres equivalents:
-
-```python
-# checkpointer (main.py lifespan) — replaces AsyncSqliteSaver / MemorySaver
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-async with AsyncPostgresSaver.from_conn_string(os.environ["DATABASE_URL"]) as saver:
-    await saver.setup()
-    ...
-
-# store (memory.build_store) — replaces InMemoryStore
-from langgraph.store.postgres.aio import AsyncPostgresStore
-
-async with AsyncPostgresStore.from_conn_string(os.environ["DATABASE_URL"]) as store:
-    await store.setup()
-    # add index={"dims": 1536, "embed": "openai:text-embedding-3-small", "fields": ["text"]}
-    # for semantic memory
-```
+On startup `backend/persistence.py` opens one connection pool and builds a
+Postgres **checkpointer** (paused runs, history/time travel) and **store**
+(long-term memory; semantic search via pgvector when `EMBEDDINGS_MODEL` is set),
+creating the tables idempotently (`DB_AUTO_SETUP=false` to manage migrations
+yourself). The pool uses `prepare_threshold=0`, so pgbouncer / Neon pooled URLs
+work. `GET /capabilities` reports `"persistence": {"checkpointer": "postgres",
+"multi_instance_safe": true}`.
 
 Run several backend replicas behind a load balancer; because state lives in
-Postgres, a request can start on one replica and resume on another.
+Postgres, a request can start on one replica and resume on another — CI proves
+this on every PR by pausing a run on one app instance and resuming it on a
+fresh one against a real Postgres.
+
+## 4. Vercel (serverless)
+
+Two projects from one repo — `frontend/` (Next.js) and `backend/` (FastAPI,
+detected zero-config from `main.py`). Step-by-step instructions and Deploy
+buttons are in the [README](../README.md#-deploy-to-vercel). The essentials:
+
+| Project | Root Directory | Required env |
+|---|---|---|
+| Backend | `backend` | `DATABASE_URL` (Storage → Neon), a model (`AI_GATEWAY_API_KEY` + `LLM_MODEL`, or any option in `.env.example`), `CORS_ORIGINS` |
+| Frontend | `frontend` | `NEXT_PUBLIC_API_URL` = backend URL |
+
+- **Postgres is mandatory** on Vercel: requests may hit different instances, and
+  in-memory state would make every resume fail (with a 404 that says so).
+- `backend/vercel.json` raises the function `maxDuration` to 300s for long SSE
+  runs (800s max on Pro); `backend/.vercelignore` keeps tests/evals out of the
+  bundle (~230 MB, under Vercel's 500 MB Python limit).
+- `backend/.python-version` pins Python 3.12.
+- Cancel (Stop) is per-instance best-effort; runs that aren't drained still
+  complete and remain resumable.
 
 ---
 

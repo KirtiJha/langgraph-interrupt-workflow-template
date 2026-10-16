@@ -1,0 +1,13 @@
+# Keep the Vercel function bundle lean: tests, evals and local state aren't
+# needed at runtime.
+test_*.py
+evals/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+.pytest_cache/
+.venv/

@@ -13,6 +13,17 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
+    # A real Postgres so the durable, multi-instance resume path is tested on
+    # every PR (that's what serverless deploys like Vercel depend on). It's a
+    # throwaway container on localhost, so it uses trust auth — no password.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -27,9 +38,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest pytest-asyncio
-      - name: Run tests (offline mock model)
+      - name: Run tests (offline mock model + real Postgres)
         env:
           USE_MOCK_LLM: "true"
+          TEST_DATABASE_URL: postgresql://postgres@localhost:5432/postgres
         run: pytest -v
 
   frontend:
