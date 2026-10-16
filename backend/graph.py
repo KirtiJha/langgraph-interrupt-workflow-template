@@ -24,6 +24,7 @@ from langgraph.graph.message import add_messages
 from langgraph.types import Command, RetryPolicy, Send, interrupt
 
 import run_control
+from client_model import scrub
 from llm import get_llm, text_of
 from memory import get_active_store, load_user_memory, save_user_memory
 from tools import web_search
@@ -653,7 +654,7 @@ async def stream_research_response(
         yield {"type": "cancelled", "message": "Run stopped — progress was saved."}
     except Exception as exc:  # pragma: no cover - surfaced to the client
         logger.exception("Streaming error")
-        yield {"type": "error", "content": f"Error in streaming: {exc}", "done": True}
+        yield {"type": "error", "content": scrub(f"Error in streaming: {exc}"), "done": True}
         return
     finally:
         run_control.release(thread_id)
@@ -678,4 +679,4 @@ async def stream_research_response(
         yield {"type": "done", "content": "", "done": True}
     except Exception as exc:  # pragma: no cover - surfaced to the client
         logger.exception("Streaming error")
-        yield {"type": "error", "content": f"Error in streaming: {exc}", "done": True}
+        yield {"type": "error", "content": scrub(f"Error in streaming: {exc}"), "done": True}

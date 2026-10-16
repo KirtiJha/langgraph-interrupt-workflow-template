@@ -13,6 +13,8 @@ import {
   ArrowLeft,
   CheckCircle2,
 } from "lucide-react";
+import ModelSettingsButton from "../../components/ModelSettings";
+import { apiHeaders, describeError, ensureOk } from "../../lib/modelSettings";
 
 // Backend API base URL — override with NEXT_PUBLIC_API_URL at build/run time.
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -71,15 +73,15 @@ export default function ApprovalPage() {
     try {
       const res = await fetch(`${API_URL}/approval/start`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: apiHeaders(),
         body: JSON.stringify({ task }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await ensureOk(res);
       const data: ApprovalResponse = await res.json();
       setThreadId(data.thread_id ?? null);
       applyResponse(data);
     } catch (e) {
-      setError("Could not start the workflow. Is the backend running on " + API_URL + "?");
+      setError(describeError(e, "Could not start the workflow. Is the backend running on " + API_URL + "?"));
     } finally {
       setLoading(false);
     }
@@ -95,14 +97,14 @@ export default function ApprovalPage() {
     try {
       const res = await fetch(`${API_URL}/approval/decide`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: apiHeaders(),
         body: JSON.stringify({ thread_id: threadId, action, ...extra }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await ensureOk(res);
       const data: ApprovalResponse = await res.json();
       applyResponse(data);
     } catch (e) {
-      setError("Could not submit your decision. Please try again.");
+      setError(describeError(e, "Could not submit your decision. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -133,9 +135,12 @@ export default function ApprovalPage() {
           >
             <ArrowLeft className="w-4 h-4" /> Research assistant
           </Link>
-          <span className="text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-full px-3 py-1">
-            Human-in-the-loop · Approve / Edit / Reject
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-full px-3 py-1">
+              Human-in-the-loop · Approve / Edit / Reject
+            </span>
+            <ModelSettingsButton apiUrl={API_URL} />
+          </div>
         </div>
 
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">

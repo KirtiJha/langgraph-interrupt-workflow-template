@@ -845,3 +845,168 @@ def test_agui_graceful_without_package(monkeypatch):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# --- Model chosen in the UI (X-LLM-* headers) --------------------------------
+@pytest.fixture()
+def fake_openai():
+    """A tiny OpenAI-compatible server that records what it was sent."""
+    import json as _json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    seen: list[dict] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            body = _json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            seen.append({"auth": self.headers.get("Authorization"), "model": body.get("model")})
+            text = "OK from the browser-chosen model"
+            if body.get("stream"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                for chunk in (
+                    {"choices": [{"index": 0, "delta": {"role": "assistant", "content": text}}]},
+                    {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+                ):
+                    payload = {"id": "c1", "object": "chat.completion.chunk", "created": 0,
+                               "model": body.get("model"), **chunk}
+                    self.wfile.write(f"data: {_json.dumps(payload)}\n\n".encode())
+                self.wfile.write(b"data: [DONE]\n\n")
+                return
+            payload = _json.dumps({
+                "id": "c1", "object": "chat.completion", "created": 0, "model": body.get("model"),
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant", "content": text}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield {"base_url": f"http://127.0.0.1:{server.server_port}/v1", "seen": seen}
+    server.shutdown()
+
+
+def _llm_headers(base_url, key="sk-browser-secret-123", model="my-model"):
+    return {"X-LLM-Provider": "custom", "X-LLM-Model": model,
+            "X-LLM-API-Key": key, "X-LLM-Base-URL": base_url}
+
+
+def test_model_providers_lists_presets_without_secrets(client):
+    data = client.get("/model/providers").json()
+    ids = {p["id"] for p in data["providers"]}
+    assert {"gateway", "openai", "anthropic", "google", "custom", "mock"} <= ids
+    assert all("env_key" not in p and "model_provider" not in p for p in data["providers"])
+    assert data["policy"]["enabled"] is True
+    assert data["policy"]["server_key_shared"] is False
+    assert "client_config" in client.get("/capabilities").json()["model"]
+
+
+def test_model_test_uses_browser_model_and_key(client, fake_openai):
+    res = client.post("/model/test", headers=_llm_headers(fake_openai["base_url"])).json()
+    assert res["ok"] is True, res
+    assert "OK" in res["sample"]
+    assert fake_openai["seen"][-1] == {"auth": "Bearer sk-browser-secret-123", "model": "my-model"}
+
+
+def test_model_test_failure_does_not_leak_key(client):
+    # Nothing listens on port 9: the error must come back without the key in it.
+    res = client.post("/model/test", headers=_llm_headers("http://127.0.0.1:9/v1")).json()
+    assert res["ok"] is False
+    assert "sk-browser-secret-123" not in str(res)
+
+
+def test_browser_model_drives_the_agent(client, fake_openai):
+    # Server runs on the mock; the request's headers switch this run to the
+    # visitor's model. The fake model answers without calling tools.
+    events = _sse(client, "POST", "/agent/start", json={"message": "hello"},
+                  headers=_llm_headers(fake_openai["base_url"]))
+    assert fake_openai["seen"], events
+    assert all(s["model"] == "my-model" for s in fake_openai["seen"])
+    state = next(e for e in events if e["type"] == "state")
+    assert "browser-chosen" in state["final_response"]
+    # And the server default is untouched for everyone else.
+    assert client.get("/capabilities").json()["model"]["mock"] is True
+
+
+def test_browser_model_drives_the_workflow(client, fake_openai):
+    headers = _llm_headers(fake_openai["base_url"])
+    res = client.post("/start", json={"message": "solar"}, headers=headers)
+    assert res.status_code == 200
+    events = _sse(client, "POST", "/stream", headers=headers,
+                  json={"thread_id": res.json()["thread_id"], "choice": "proceed"})
+    assert fake_openai["seen"], events
+    assert not any(e.get("type") == "error" for e in events), events
+
+
+@pytest.mark.parametrize(
+    "headers, message",
+    [
+        ({"X-LLM-Provider": "nope"}, "Unknown provider"),
+        ({"X-LLM-Provider": "openai"}, "Choose a model"),
+        ({"X-LLM-Provider": "openai", "X-LLM-Model": "gpt-5"}, "API key"),
+        ({"X-LLM-Provider": "custom", "X-LLM-Model": "m", "X-LLM-API-Key": "k"}, "base URL"),
+        ({"X-LLM-Provider": "custom", "X-LLM-Model": "m", "X-LLM-API-Key": "k",
+          "X-LLM-Base-URL": "file:///etc/passwd"}, "http(s)"),
+        ({"X-LLM-Provider": "openai", "X-LLM-Model": "m", "X-LLM-API-Key": "k",
+          "X-LLM-Temperature": "hot"}, "number"),
+    ],
+)
+def test_bad_browser_model_settings_are_400(client, headers, message):
+    res = client.post("/start", json={"message": "x"}, headers=headers)
+    assert res.status_code == 400
+    assert message in res.json()["detail"]
+
+
+def test_deployed_blocks_private_base_urls(client, monkeypatch):
+    monkeypatch.setenv("VERCEL", "1")
+    for url in ("http://example.com/v1", "https://127.0.0.1/v1", "https://169.254.169.254/v1"):
+        res = client.post("/model/test", headers=_llm_headers(url))
+        assert res.status_code == 400, url
+    monkeypatch.setenv("LLM_CLIENT_ALLOW_PRIVATE_HOSTS", "true")
+    assert client.post("/model/test", headers=_llm_headers("http://127.0.0.1:9/v1")).status_code == 200
+
+
+def test_owner_can_disable_browser_model_settings(client, monkeypatch, fake_openai):
+    monkeypatch.setenv("LLM_CLIENT_CONFIG", "false")
+    res = client.post("/model/test", headers=_llm_headers(fake_openai["base_url"])).json()
+    assert res["ok"] is True and not fake_openai["seen"]  # server model (mock) answered
+
+
+def test_shared_server_key_is_opt_in(client, monkeypatch, fake_openai):
+    headers = _llm_headers(fake_openai["base_url"], key="")
+    assert client.post("/model/test", headers=headers).status_code == 400
+    monkeypatch.setenv("LLM_CLIENT_CAN_USE_SERVER_KEY", "true")
+    monkeypatch.setenv("LLM_API_KEY", "sk-server-owned-456")
+    assert client.post("/model/test", headers=headers).json()["ok"] is True
+    assert fake_openai["seen"][-1]["auth"] == "Bearer sk-server-owned-456"
+
+
+def test_mock_provider_needs_no_key(client):
+    res = client.post("/model/test", headers={"X-LLM-Provider": "mock"}).json()
+    assert res["ok"] is True
+
+
+def test_rate_limiter_is_shared_across_calls(monkeypatch):
+    import llm
+
+    monkeypatch.setenv("LLM_REQUESTS_PER_SECOND", "2")
+    assert llm._build_rate_limiter() is llm._build_rate_limiter()
+
+
+def test_browser_model_drives_the_deep_agent(client, fake_openai):
+    events = _sse(client, "POST", "/deep/start", json={"message": "hello"},
+                  headers=_llm_headers(fake_openai["base_url"]))
+    assert fake_openai["seen"], events
+    assert all(s["model"] == "my-model" for s in fake_openai["seen"])
+    state = next(e for e in events if e["type"] == "state")
+    assert "browser-chosen" in state["final_response"]

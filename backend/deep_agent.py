@@ -28,6 +28,7 @@ from typing import Any, Optional
 
 from deepagents import SubAgent, create_deep_agent
 
+from client_model import ClientModelMiddleware
 from llm import get_llm, using_mock_llm
 from tools import web_search
 import os
@@ -63,6 +64,8 @@ RESEARCHER = SubAgent(
         "sub-question you were given."
     ),
     tools=[web_search],
+    # Subagents run their own model calls — swap in the browser-chosen model there too.
+    middleware=[ClientModelMiddleware()],
 )
 
 CRITIC = SubAgent(
@@ -77,6 +80,20 @@ CRITIC = SubAgent(
         "source. Return a short, specific list of improvements — do not rewrite "
         "the answer yourself."
     ),
+    middleware=[ClientModelMiddleware()],
+)
+
+# Declared explicitly (instead of deepagents' auto-added default) so it also
+# honours the browser-chosen model.
+GENERAL_PURPOSE = SubAgent(
+    name="general-purpose",
+    description=(
+        "General-purpose agent for multi-step tasks that don't fit the "
+        "researcher or critic. Give it a self-contained instruction."
+    ),
+    system_prompt="You are a capable assistant. Complete the task you are given and report back concisely.",
+    tools=[web_search],
+    middleware=[ClientModelMiddleware()],
 )
 
 
@@ -123,8 +140,8 @@ def build_deep_agent(
         model=get_llm(),
         tools=[web_search],
         system_prompt=MAIN_INSTRUCTIONS,
-        subagents=[RESEARCHER, CRITIC],
-        middleware=[TodoListMiddleware(), hitl],
+        subagents=[RESEARCHER, CRITIC, GENERAL_PURPOSE],
+        middleware=[ClientModelMiddleware(), TodoListMiddleware(), hitl],
         checkpointer=checkpointer,
         store=store,
     )

@@ -26,6 +26,8 @@ import {
   Copy,
   Check,
 } from "lucide-react";
+import ModelSettingsButton from "../components/ModelSettings";
+import { apiHeaders, describeError, ensureOk, useModelSettings } from "../lib/modelSettings";
 
 interface Message {
   role: "user" | "assistant" | "system" | "choice";
@@ -119,6 +121,9 @@ export default function ChatInterface() {
   const [structuredResponse, setStructuredResponse] = useState<any | null>(null);
   // Active backend features (from /capabilities) shown as header status badges.
   const [capabilities, setCapabilities] = useState<any | null>(null);
+  // Model picked in the browser (⚙ Model); null = the server's default model.
+  const userModel = useModelSettings();
+  const userModelLive = !!userModel && userModel.provider !== "mock";
   // True when the /capabilities probe fails — the backend isn't reachable.
   const [backendDown, setBackendDown] = useState(false);
   // Timestamp of the assistant message most recently copied (for "Copied" feedback).
@@ -227,9 +232,10 @@ export default function ChatInterface() {
   ) => {
     const res = await fetch(`${API_URL}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: apiHeaders(),
       body: JSON.stringify(body),
     });
+    await ensureOk(res);
     if (!res.body) throw new Error("No response body");
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -304,15 +310,11 @@ export default function ChatInterface() {
     try {
       const response = await fetch(`${API_URL}/start`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: apiHeaders(),
         body: JSON.stringify({ message, user_id: userId }),
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      await ensureOk(response);
 
       const data = await response.json();
       setThreadId(data.thread_id);
@@ -338,7 +340,7 @@ export default function ChatInterface() {
       console.error("Error starting chat:", error);
       addMessage(
         "system",
-        "Sorry, there was an error starting the conversation. Please try again."
+        describeError(error, "Sorry, there was an error starting the conversation. Please try again.")
       );
       setInput(message); // don't lose what they typed
       loadCapabilities(); // re-probe: shows the "backend unreachable" banner if that's why
@@ -413,7 +415,7 @@ export default function ChatInterface() {
       console.error("Error resuming chat:", error);
       addMessage(
         "system",
-        "Sorry, there was an error processing your response. Please try again."
+        describeError(error, "Sorry, there was an error processing your response. Please try again.")
       );
     } finally {
       setIsLoading(false);
@@ -424,7 +426,7 @@ export default function ChatInterface() {
   const loadHistory = async () => {
     if (!threadId) return;
     try {
-      const res = await fetch(`${API_URL}/history/${threadId}`);
+      const res = await fetch(`${API_URL}/history/${threadId}`, { headers: apiHeaders() });
       const data = await res.json();
       setHistory(data.checkpoints || []);
       setShowHistory(true);
@@ -542,7 +544,7 @@ export default function ChatInterface() {
       });
     } catch (error) {
       console.error("Agent error:", error);
-      addMessage("system", "Sorry, the agent hit an error. Please try again.");
+      addMessage("system", describeError(error, "Sorry, the agent hit an error. Please try again."));
       loadCapabilities(); // re-probe: surfaces the backend-unreachable banner
     } finally {
       setIsLoading(false);
@@ -559,7 +561,7 @@ export default function ChatInterface() {
     try {
       await fetch(`${API_URL}/cancel`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: apiHeaders(),
         body: JSON.stringify({ thread_id: threadId }),
       });
     } catch (error) {
@@ -611,9 +613,7 @@ export default function ChatInterface() {
     try {
       const response = await fetch(`${API_URL}/continue`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: apiHeaders(),
         body: JSON.stringify({
           thread_id: threadId,
           message: message,
@@ -621,9 +621,7 @@ export default function ChatInterface() {
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      await ensureOk(response);
 
       const data = await response.json();
       setChatState(data.state);
@@ -644,7 +642,7 @@ export default function ChatInterface() {
       console.error("Error continuing chat:", error);
       addMessage(
         "system",
-        "Sorry, there was an error processing your follow-up question. Please try again."
+        describeError(error, "Sorry, there was an error processing your follow-up question. Please try again.")
       );
     } finally {
       setIsLoading(false);
@@ -1169,6 +1167,7 @@ export default function ChatInterface() {
                 <Plus className="w-3.5 h-3.5" aria-hidden="true" /> New chat
               </button>
             )}
+            <ModelSettingsButton apiUrl={API_URL} />
             <Link
               href="/approval"
               className="text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-full px-3 py-1.5 transition-colors"
@@ -1205,6 +1204,16 @@ export default function ChatInterface() {
         <div className="bg-white/60 backdrop-blur-sm border-b border-white/30 px-4 py-1.5">
           {/* One scrollable row on mobile; wraps on wider screens. */}
           <div className="flex flex-nowrap sm:flex-wrap items-center gap-2 text-[11px] overflow-x-auto scrollbar-none">
+            {userModel ? (
+            <span
+              className="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-purple-50 border-purple-200 text-purple-700"
+              title={`Your model (set in this browser): ${userModel.model} · ${userModel.provider} — change it with the Model button`}
+            >
+              <Bot className="w-3 h-3" aria-hidden="true" />
+              {userModel.provider === "mock" ? "Mock model" : userModel.model}
+              <span className="font-normal opacity-70">· yours</span>
+            </span>
+            ) : (
             <span
               className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
                 capabilities.model?.error
@@ -1217,7 +1226,7 @@ export default function ChatInterface() {
                 capabilities.model?.error
                   ? `Model "${capabilities.model.name}" failed to load — running on the mock model. ${capabilities.model.error}`
                   : capabilities.model?.mock
-                  ? "Offline mock model — set LLM_MODEL + a provider key (or AI_GATEWAY_API_KEY) for a real LLM"
+                  ? "Offline mock model — pick a real model and key with the Model button, or set LLM_MODEL + a provider key on the server"
                   : `Live model: ${capabilities.model?.name}` +
                     (capabilities.model?.provider ? ` · provider ${capabilities.model.provider}` : "") +
                     (capabilities.model?.endpoint ? ` · ${capabilities.model.endpoint}` : "")
@@ -1237,6 +1246,7 @@ export default function ChatInterface() {
                 <span className="font-normal opacity-70">· AI Gateway</span>
               )}
             </span>
+            )}
 
             {capabilities.persistence && (
               <span
@@ -1357,18 +1367,18 @@ export default function ChatInterface() {
             {capabilities.deep_agent?.installed && (
               <span
                 className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
-                  capabilities.deep_agent.available
+                  (capabilities.deep_agent.available || userModelLive)
                     ? "bg-teal-50 border-teal-200 text-teal-700"
                     : "bg-gray-50 border-gray-200 text-gray-400"
                 }`}
                 title={
-                  capabilities.deep_agent.available
+                  (capabilities.deep_agent.available || userModelLive)
                     ? "Deep Agent engine ready — plans & delegates to subagents"
                     : capabilities.deep_agent.reason
                 }
               >
                 <Brain className="w-3 h-3" />
-                Deep Agent{capabilities.deep_agent.available ? "" : " (needs model)"}
+                Deep Agent{(capabilities.deep_agent.available || userModelLive) ? "" : " (needs model)"}
               </span>
             )}
 
@@ -1412,7 +1422,7 @@ export default function ChatInterface() {
                 ? "Agent engine: a model-driven create_agent loop. It decides when to search and pauses for your approval before running a tool (approve / edit / reject)."
                 : "Workflow engine: a deterministic graph with fixed interrupt points and parallel Send research. Switch to Agent or Deep Agent in the header to compare paradigms."}
             </p>
-            {engine === "deep" && capabilities?.deep_agent?.available === false && (
+            {engine === "deep" && capabilities?.deep_agent?.available === false && !userModelLive && (
               <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                 {capabilities.deep_agent.reason}

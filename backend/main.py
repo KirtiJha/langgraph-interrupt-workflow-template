@@ -14,16 +14,18 @@ variables (see ``.env.example``).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -41,9 +43,11 @@ from approval_workflow import build_approval_graph
 from graph import build_research_graph, resilience_config, stream_research_response
 from guardrails import GuardrailMiddleware
 import approval_policy
+import client_model
+from client_model import ClientModelConfigError, ClientModelConfigMiddleware, scrub
 import persistence
 import run_control
-from llm import model_status, requests_per_second, using_mock_llm
+from llm import get_llm, model_status, requests_per_second, text_of, using_mock_llm
 from mcp_tools import load_mcp_tools
 from memory import build_store, index_config, load_user_memory, save_user_memory
 
@@ -73,6 +77,8 @@ def _capabilities(store, mcp_tools) -> dict:
             # mock / name / provider / via / endpoint host / error — never the key.
             **model_status(),
             "requests_per_second": requests_per_second(),
+            # Whether visitors may pick their own model/key in the UI.
+            "client_config": client_model.policy(),
         },
         "persistence": persistence.describe(),
         "guardrails": {
@@ -99,8 +105,8 @@ def _capabilities(store, mcp_tools) -> dict:
                 if deep_agent_available()
                 else "Deep Agent engine needs the 'deepagents' package."
                 if not DEEP_AGENT_ENABLED
-                else "Deep Agent plans and delegates to subagents — set LLM_MODEL "
-                "+ a provider key to see it in action."
+                else "Deep Agent plans and delegates to subagents — pick a real model "
+                "(Model button, or LLM_MODEL + a provider key) to see it in action."
             ),
         },
     }
@@ -160,6 +166,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Model settings chosen in the UI arrive as X-LLM-* headers; scope them to the
+# request. Added last so it is outermost — CORS preflights still pass through,
+# and it covers every route including /agui and streamed responses.
+app.add_middleware(ClientModelConfigMiddleware)
 
 
 # --- Request models ---------------------------------------------------------
@@ -245,6 +256,52 @@ async def capabilities(request: Request):
     return getattr(request.app.state, "capabilities", {})
 
 
+@app.exception_handler(ClientModelConfigError)
+async def _client_model_error(_request: Request, exc: ClientModelConfigError):
+    return JSONResponse(status_code=400, content={"detail": f"Model settings: {exc}"})
+
+
+@app.get("/model/providers")
+async def model_providers():
+    """Provider presets for the UI's model settings, plus the owner's policy."""
+    return {
+        "providers": client_model.public_providers(),
+        "policy": client_model.policy(),
+        "server_default": model_status(),
+    }
+
+
+@app.post("/model/test")
+async def model_test():
+    """Check the model in the request's X-LLM-* headers with a one-word prompt.
+
+    Returns ``{ok, latency_ms, model, sample | error}`` — never the key.
+    """
+    override = client_model.get_override()
+    label = (override or {}).get("model") or model_status().get("name")
+    started = time.perf_counter()
+    try:
+        llm = get_llm()
+        reply = await asyncio.wait_for(llm.ainvoke("Reply with the single word: OK"), timeout=30)
+        sample = text_of(getattr(reply, "content", reply)) or ""
+        return {
+            "ok": True,
+            "model": label,
+            "latency_ms": int((time.perf_counter() - started) * 1000),
+            "sample": sample.strip()[:80],
+        }
+    except asyncio.TimeoutError:
+        error = "Timed out after 30s."
+    except Exception as exc:  # surfaced to the UI, key scrubbed
+        error = scrub(f"{type(exc).__name__}: {exc}")[:500]
+    return {
+        "ok": False,
+        "model": label,
+        "latency_ms": int((time.perf_counter() - started) * 1000),
+        "error": error,
+    }
+
+
 @app.post("/start")
 async def start_chat(chat_input: ChatInput, request: Request):
     """Start a new research conversation."""
@@ -281,7 +338,7 @@ async def start_chat(chat_input: ChatInput, request: Request):
         }
     except Exception as exc:
         logger.exception("Error starting research")
-        raise HTTPException(status_code=500, detail=f"Error starting research: {exc}")
+        raise HTTPException(status_code=500, detail=scrub(f"Error starting research: {exc}"))
 
 
 @app.get("/get_state/{thread_id}")
@@ -305,7 +362,7 @@ async def get_research_state(thread_id: str, request: Request):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=404, detail=f"Error getting state: {exc}")
+        raise HTTPException(status_code=404, detail=scrub(f"Error getting state: {exc}"))
 
 
 @app.post("/cancel")
@@ -367,7 +424,7 @@ async def resume_research(data: ResumeInput, request: Request):
         }
     except Exception as exc:
         logger.exception("Error resuming research")
-        raise HTTPException(status_code=500, detail=f"Error resuming research: {exc}")
+        raise HTTPException(status_code=500, detail=scrub(f"Error resuming research: {exc}"))
 
 
 @app.post("/continue")
@@ -409,7 +466,7 @@ async def continue_conversation(data: ContinueInput, request: Request):
         raise
     except Exception as exc:
         logger.exception("Error continuing conversation")
-        raise HTTPException(status_code=500, detail=f"Error continuing conversation: {exc}")
+        raise HTTPException(status_code=500, detail=scrub(f"Error continuing conversation: {exc}"))
 
 
 # --- Approval workflow (draft → approve / edit / reject → send) -------------
@@ -451,7 +508,7 @@ async def approval_start(data: ApprovalStart, request: Request):
         return {"thread_id": thread_id, **_approval_payload(state, result)}
     except Exception as exc:
         logger.exception("Error starting approval workflow")
-        raise HTTPException(status_code=500, detail=f"Error starting approval: {exc}")
+        raise HTTPException(status_code=500, detail=scrub(f"Error starting approval: {exc}"))
 
 
 @app.post("/approval/decide")
@@ -474,7 +531,7 @@ async def approval_decide(data: ApprovalDecision, request: Request):
         return _approval_payload(state, result)
     except Exception as exc:
         logger.exception("Error deciding approval workflow")
-        raise HTTPException(status_code=500, detail=f"Error in approval decision: {exc}")
+        raise HTTPException(status_code=500, detail=scrub(f"Error in approval decision: {exc}"))
 
 
 def _stream_response(
@@ -640,7 +697,7 @@ async def get_history(thread_id: str, request: Request):
             )
         return {"thread_id": thread_id, "checkpoints": checkpoints}
     except Exception as exc:
-        raise HTTPException(status_code=404, detail=f"Error reading history: {exc}")
+        raise HTTPException(status_code=404, detail=scrub(f"Error reading history: {exc}"))
 
 
 @app.post("/fork")

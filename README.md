@@ -108,7 +108,17 @@ Open http://localhost:3000, ask a question, and watch the workflow pause for you
 
 ### Use a real LLM — any provider, any model
 
-Uncomment **one** option in `backend/.env`:
+**From the UI (no restart):** click the **⚙ Server model** button in the
+header, pick a provider (Vercel AI Gateway, OpenAI, Anthropic, Google, OpenRouter,
+Groq, Together, DeepSeek, Ollama, or any OpenAI-compatible URL), type or pick a
+model, paste your key, then **Test connection** and **Save**. Every engine
+(workflow, agent, Deep Agent and its subagents, the approval drafter, AG-UI) uses
+that model. The key stays in your browser (sessionStorage, or localStorage if
+you tick *Remember*). It is sent as `X-LLM-*` headers with each request and
+applies to that request only; the server never stores or logs it.
+**Use server default** goes back to the server's model.
+
+**From the environment (the server's default):** uncomment **one** option in `backend/.env`:
 
 ```env
 # 1) Vercel AI Gateway — one key, models from every provider
@@ -130,6 +140,14 @@ OpenAI, Anthropic and Google SDKs ship by default; option 3 covers essentially
 everything else without another dependency. The header's model badge shows what
 is *actually* running — and if a configured model fails to load, it turns red
 with the reason instead of silently falling back to the mock.
+
+Owner controls for browser-chosen models:
+
+| Variable | Effect | Default |
+|----------|--------|---------|
+| `LLM_CLIENT_CONFIG` | `false` ignores model settings from the browser | `true` |
+| `LLM_CLIENT_CAN_USE_SERVER_KEY` | Let a browser-chosen model use the server's key when no key is entered (fine for a personal deploy) | `false` |
+| `LLM_CLIENT_ALLOW_PRIVATE_HOSTS` | Allow custom base URLs on private/loopback addresses (e.g. local Ollama) | `true` locally, `false` on Vercel |
 
 ## ▲ Deploy to Vercel
 
@@ -462,6 +480,8 @@ minimal CopilotKit chat wired to `/agui` — start the backend, then
 | `/cancel` | POST | Gracefully stop an in-flight run — progress is checkpointed and resumable |
 | `/approval/start` | POST | Draft content for a task and pause for review |
 | `/approval/decide` | POST | Resume with `approve` / `edit` / `reject` |
+| `/model/providers` | GET | Provider presets + model suggestions for the UI's model settings, and the owner's policy |
+| `/model/test` | POST | Check the model in the request's `X-LLM-*` headers with a one-word prompt (`{ok, latency_ms, sample \| error}`) |
 | `/capabilities` | GET | Which optional features are active (guardrails, MCP tools, structured output, semantic memory) — drives the UI status strip |
 | `/health` | GET | Liveness probe |
 
@@ -476,6 +496,7 @@ All configuration is via environment variables (see [`backend/.env.example`](bac
 | `AI_GATEWAY_API_KEY` | Route through Vercel AI Gateway (any provider's models, one key) | – |
 | `LLM_BASE_URL` / `LLM_API_KEY` | Any OpenAI-compatible endpoint (OpenRouter, Groq, Ollama, vLLM…) | – |
 | `LLM_TEMPERATURE` | Sampling temperature (omit for reasoning models) | provider default |
+| `LLM_CLIENT_CONFIG` / `LLM_CLIENT_CAN_USE_SERVER_KEY` / `LLM_CLIENT_ALLOW_PRIVATE_HOSTS` | Model choice from the UI: on/off, share the server key, private custom URLs | `true` / `false` / local only |
 | `USE_MOCK_LLM` | Force the offline mock model | `false` |
 | `TAVILY_API_KEY` | Enables live web search in `tools.py` | – |
 | `DATABASE_URL` (or `POSTGRES_URL`) | Postgres checkpointer + store — **required on Vercel / multi-instance** | – |
