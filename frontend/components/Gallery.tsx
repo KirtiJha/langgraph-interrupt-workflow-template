@@ -1,11 +1,12 @@
 "use client";
 
-// Landing: pick a starter mission or type your own goal, and choose how much
-// the agent should ask before acting.
+// Landing: pick a repository (any public one, or the sample), see its board at a
+// glance, choose how much the steward should ask, and launch a mission.
 
-import { useState } from "react";
-import { ArrowRight, Brain, Gauge, Hand, Rocket, Sparkles, Zap } from "lucide-react";
-import { Mission, World, money } from "../lib/api";
+import { useEffect, useState } from "react";
+import { ArrowRight, Brain, CircleDot, Eye, Gauge, GitPullRequest, Github, Hand, Loader2, Rocket, Sparkles, Star, Zap } from "lucide-react";
+import { Inspection, Mission, getJSON } from "../lib/api";
+import { recentRepos, rememberRepo } from "../lib/github";
 
 const ACCENT: Record<string, string> = {
   rose: "from-rose-100 to-rose-50 border-rose-200", amber: "from-amber-100 to-amber-50 border-amber-200",
@@ -14,88 +15,147 @@ const ACCENT: Record<string, string> = {
 };
 
 export const AUTONOMY_OPTIONS = [
+  { id: "observe", label: "Observe", blurb: "Proposes everything, posts nothing.", Icon: Eye },
   { id: "careful", label: "Careful", blurb: "Asks before every action.", Icon: Hand },
-  { id: "balanced", label: "Balanced", blurb: "Asks when it's risky or over your limit.", Icon: Gauge },
-  { id: "autopilot", label: "Autopilot", blurb: "Only asks for high-risk or irreversible actions.", Icon: Zap },
+  { id: "balanced", label: "Balanced", blurb: "Labels just happen; comments and closes ask.", Icon: Gauge },
+  { id: "autopilot", label: "Autopilot", blurb: "Asks only for high-risk or irreversible actions.", Icon: Zap },
 ];
 
-export default function Gallery({ missions, world, memories, offlinePilot, autonomy, askAbove, onAutonomy, onAskAbove, onStart, busy }: {
-  missions: Mission[]; world: World | null; memories: string[]; offlinePilot: boolean;
-  autonomy: string; askAbove: number; onAutonomy: (a: string) => void; onAskAbove: (n: number) => void;
-  onStart: (goal: string, mission: Mission | null) => void; busy: boolean;
+export default function Gallery({ missions, sampleRepo, offlinePilot, token, autonomy, onAutonomy, userId, onStart, busy }: {
+  missions: Mission[]; sampleRepo: string; offlinePilot: boolean; token: string | null;
+  autonomy: string; onAutonomy: (a: string) => void; userId: string | null;
+  onStart: (repo: string, goal: string, mission: Mission | null) => void; busy: boolean;
 }) {
+  const [repoInput, setRepoInput] = useState("");
+  const [repo, setRepo] = useState<Inspection | null>(null);
+  const [inspecting, setInspecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [goal, setGoal] = useState("");
+  const [recent, setRecent] = useState<string[]>([]);
+
+  useEffect(() => { setRecent(recentRepos()); }, []);
+
+  const inspect = async (slug: string) => {
+    setInspecting(true);
+    setError(null);
+    try {
+      const data = await getJSON<Inspection>(`/repos/inspect?repo=${encodeURIComponent(slug)}${userId ? `&user_id=${encodeURIComponent(userId)}` : ""}`);
+      setRepo(data);
+      setRepoInput(data.repo.full_name);
+      if (data.mode === "live") { rememberRepo(data.repo.full_name); setRecent(recentRepos()); }
+    } catch (e: any) {
+      setRepo(null);
+      setError(e?.message || "Couldn't load that repository.");
+    } finally {
+      setInspecting(false);
+    }
+  };
+
+  // Re-inspect when the token changes (write access may have changed).
+  useEffect(() => { if (repo && repo.mode === "live") inspect(repo.repo.full_name); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const readOnly = !!repo && repo.mode === "live" && !repo.can_write;
+  const effectiveAutonomy = readOnly ? "observe" : autonomy;
+  const slug = repo?.repo.full_name;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 pb-16 pt-8 sm:pt-12">
       <section className="grid items-start gap-8 lg:grid-cols-[1.2fr_1fr]">
         <div>
-          <span className="chip border-ember-200 bg-ember-50 text-ember-700"><Sparkles className="h-3 w-3" aria-hidden="true" />Human-in-the-loop agent</span>
+          <span className="chip border-ember-200 bg-ember-50 text-ember-700"><Sparkles className="h-3 w-3" aria-hidden="true" />Human-in-the-loop maintainer agent</span>
           <h1 className="mt-3 font-display text-4xl font-semibold leading-[1.05] tracking-tight text-ink sm:text-5xl">
-            Give it a job.<br /><span className="text-ember-600">It asks before it acts.</span>
+            Your backlog, triaged.<br /><span className="text-ember-600">Nothing posted without you.</span>
           </h1>
           <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-stone-600">
-            Mission Control plans and does real-life tasks inside your world — inbox, calendar, wallet, bookings — and pauses for your
-            approval on anything that costs money, can't be undone, or involves other people. Approve, edit, reject or reply; rewind
-            and try another path.
+            Repo Steward reads your issues and pull requests, then proposes labels, replies, closes, release notes and welcomes —
+            each with a risk score and a preview. Approve in bulk, edit before it posts, reject with a reason it learns from, rewind if you change your mind.
           </p>
-          <form className="mt-6 flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); if (goal.trim()) onStart(goal.trim(), null); }}>
-            <input className="field h-12 text-[15px]" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="Your own goal, e.g. “Find a weekend to see Jordan and book somewhere nice”" aria-label="Your goal" />
-            <button type="submit" className="btn-accent h-12 shrink-0 px-5" disabled={busy || !goal.trim()}>
-              <Rocket className="h-4 w-4" aria-hidden="true" /> Launch
+
+          <form className="mt-6 flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); if (repoInput.trim()) inspect(repoInput.trim()); }}>
+            <div className="relative flex-1">
+              <Github className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" aria-hidden="true" />
+              <input className="field h-12 pl-9 text-[15px]" value={repoInput} onChange={(e) => setRepoInput(e.target.value)}
+                     placeholder="owner/repository or a github.com URL" aria-label="Repository" autoComplete="off" spellCheck={false} />
+            </div>
+            <button type="submit" className="btn-primary h-12 shrink-0 px-5" disabled={inspecting || !repoInput.trim()}>
+              {inspecting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <ArrowRight className="h-4 w-4" aria-hidden="true" />} Load
             </button>
           </form>
-          {offlinePilot && (
-            <p className="mt-2 text-xs text-stone-500">
-              Running on the offline pilot: the five starter missions below work fully without a key. For your own goals, add a model under <strong>Model</strong> in the header.
-            </p>
-          )}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
+            <button type="button" onClick={() => inspect(sampleRepo)} className="chip border-stone-200 bg-white text-stone-700 hover:border-ember-300 hover:text-ember-700">Try the sample repo</button>
+            {recent.map((r) => <button key={r} type="button" onClick={() => inspect(r)} className="chip border-stone-200 bg-white text-stone-700 hover:border-ember-300 hover:text-ember-700">{r}</button>)}
+            <span className="ml-1">Any public repo works read-only. <strong>Connect GitHub</strong> to act.</span>
+          </div>
+          {error && <p role="alert" className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
           <div className="mt-6">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">How much should it ask?</div>
-            <div role="radiogroup" aria-label="Autonomy" className="mt-2 grid gap-2 sm:grid-cols-3">
-              {AUTONOMY_OPTIONS.map(({ id, label, blurb, Icon }) => (
-                <button key={id} role="radio" aria-checked={autonomy === id} type="button" onClick={() => onAutonomy(id)}
-                        className={`rounded-xl border p-3 text-left transition-all ${autonomy === id ? "border-ink bg-ink text-paper shadow-lift" : "border-stone-200 bg-white hover:border-stone-300"}`}>
-                  <div className="flex items-center gap-1.5 text-sm font-semibold"><Icon className="h-4 w-4" aria-hidden="true" />{label}</div>
-                  <div className={`mt-1 text-xs ${autonomy === id ? "text-paper/70" : "text-stone-500"}`}>{blurb}</div>
-                </button>
-              ))}
+            <div role="radiogroup" aria-label="Autonomy" className="mt-2 grid gap-2 sm:grid-cols-4">
+              {AUTONOMY_OPTIONS.map(({ id, label, blurb, Icon }) => {
+                const active = effectiveAutonomy === id;
+                const disabled = readOnly && id !== "observe";
+                return (
+                  <button key={id} role="radio" aria-checked={active} type="button" onClick={() => !disabled && onAutonomy(id)} disabled={disabled}
+                          className={`rounded-xl border p-3 text-left transition-all disabled:cursor-not-allowed disabled:opacity-40 ${active ? "border-ink bg-ink text-paper shadow-lift" : "border-stone-200 bg-white hover:border-stone-300"}`}>
+                    <div className="flex items-center gap-1.5 text-sm font-semibold"><Icon className="h-4 w-4" aria-hidden="true" />{label}</div>
+                    <div className={`mt-1 text-xs ${active ? "text-paper/70" : "text-stone-500"}`}>{blurb}</div>
+                  </button>
+                );
+              })}
             </div>
-            {autonomy === "balanced" && (
-              <label className="mt-2 flex items-center gap-3 text-xs text-stone-600">
-                Ask me before spending more than <strong className="tabular text-ink">{money(askAbove)}</strong>
-                <input type="range" min={0} max={500} step={25} value={askAbove} onChange={(e) => onAskAbove(Number(e.target.value))} className="w-40 accent-ember-600" aria-label="Ask-first limit" />
-              </label>
-            )}
+            {readOnly && <p className="mt-2 text-xs text-stone-500">No write access to this repo, so the steward will <strong>observe</strong>: every action becomes a proposal you can copy as a checklist. Connect a token to act.</p>}
           </div>
         </div>
 
         <aside className="card bg-grid p-5">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">Your world (simulated)</div>
-          {world ? (
-            <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
-              <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="text-xs text-stone-500">Wallet</dt><dd className="tabular text-lg font-semibold text-ink">{money(world.wallet.balance, 2)}</dd></div>
-              <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="text-xs text-stone-500">Unread mail</dt><dd className="tabular text-lg font-semibold text-ink">{world.inbox.filter((e) => e.unread).length} <span className="text-xs font-normal text-rose-600">{world.inbox.filter((e) => e.urgent).length} urgent</span></dd></div>
-              <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="text-xs text-stone-500">Calendar</dt><dd className="tabular text-lg font-semibold text-ink">{world.calendar.length} <span className="text-xs font-normal text-stone-500">events</span></dd></div>
-              <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="text-xs text-stone-500">Subscriptions</dt><dd className="tabular text-lg font-semibold text-ink">{money(world.subscriptions.reduce((s, x) => s + x.price, 0))}<span className="text-xs font-normal text-stone-500">/mo</span></dd></div>
-            </dl>
-          ) : <p className="mt-3 text-sm text-stone-400">Loading…</p>}
-          <p className="mt-3 text-xs text-stone-500">{world?.owner.name} · {world?.owner.city}. Every mission starts from this same world; nothing here is real.</p>
-          <div className="mt-4 border-t border-stone-200/70 pt-3">
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone-500"><Brain className="h-3.5 w-3.5" aria-hidden="true" />What it remembers about you</div>
-            {memories.length ? <ul className="mt-2 space-y-1 text-xs text-stone-700">{memories.map((m) => <li key={m}>· {m}</li>)}</ul>
-              : <p className="mt-2 text-xs text-stone-400">Nothing yet — missions leave memories (“Mom is vegetarian”) that shape the next one.</p>}
-          </div>
+          {!repo ? (
+            <>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">Repository</div>
+              <p className="mt-3 text-sm text-stone-500">Load a repository to see its board: open issues, pull requests, labels — and what the steward remembers about it.</p>
+              <ul className="mt-4 space-y-2 text-xs text-stone-600">
+                <li>· Public repos load instantly, read-only.</li>
+                <li>· With a token, approved actions happen on GitHub.</li>
+                <li>· {offlinePilot ? "Offline pilot active: triage, stale sweep, PR review, release notes and welcomes work with no model key." : "A real model is connected: open-ended goals work too."}</li>
+              </ul>
+            </>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-base font-semibold text-ink">{repo.repo.full_name}</div>
+                  {repo.repo.description && <p className="mt-0.5 text-xs text-stone-600">{repo.repo.description}</p>}
+                </div>
+                <span className={`chip shrink-0 ${repo.mode === "live" ? (repo.can_write ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-violet-200 bg-violet-50 text-violet-700") : "border-stone-200 bg-stone-50 text-stone-600"}`}>
+                  {repo.mode === "live" ? (repo.can_write ? "write access" : "read-only") : "sample"}
+                </span>
+              </div>
+              <dl className="mt-3 grid grid-cols-3 gap-2 text-sm">
+                <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="flex items-center gap-1 text-xs text-stone-500"><CircleDot className="h-3 w-3" aria-hidden="true" />Issues</dt><dd className="tabular text-lg font-semibold text-ink">{repo.issues.length}<span className="text-xs font-normal text-stone-500"> · {repo.issues.filter((i) => !i.labels.length).length} unlabelled</span></dd></div>
+                <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="flex items-center gap-1 text-xs text-stone-500"><GitPullRequest className="h-3 w-3" aria-hidden="true" />PRs</dt><dd className="tabular text-lg font-semibold text-ink">{repo.pulls.length}</dd></div>
+                <div className="rounded-xl bg-white p-3 shadow-sm"><dt className="flex items-center gap-1 text-xs text-stone-500"><Star className="h-3 w-3" aria-hidden="true" />Stars</dt><dd className="tabular text-lg font-semibold text-ink">{repo.repo.stars.toLocaleString()}</dd></div>
+              </dl>
+              <div className="mt-2 flex flex-wrap gap-1">{repo.labels.slice(0, 8).map((l) => <span key={l.name} className="chip border-stone-200 bg-white text-stone-700" style={{ borderColor: `#${l.color}` }}>{l.name}</span>)}{repo.labels.length > 8 && <span className="text-[11px] text-stone-400">+{repo.labels.length - 8}</span>}</div>
+              {repo.rate?.remaining && Number(repo.rate.remaining) < 20 && <p className="mt-2 text-[11px] text-amber-700">GitHub rate limit nearly used ({repo.rate.remaining} left). A token raises it to 5,000/h.</p>}
+              <div className="mt-4 border-t border-stone-200/70 pt-3">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone-500"><Brain className="h-3.5 w-3.5" aria-hidden="true" />What it remembers about this repo</div>
+                {repo.memories.length ? <ul className="mt-2 space-y-1 text-xs text-stone-700">{repo.memories.map((m) => <li key={m}>· {m}</li>)}</ul>
+                  : <p className="mt-2 text-xs text-stone-400">Nothing yet — missions leave notes (“uses needs-repro”) that shape the next one.</p>}
+              </div>
+            </>
+          )}
         </aside>
       </section>
 
       <section className="mt-10">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">Starter missions</h2>
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">Missions {slug ? `on ${slug}` : ""}</h2>
+          {!repo && <span className="text-xs text-stone-400">Load a repository first</span>}
+        </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {missions.map((m) => (
-            <button key={m.id} type="button" onClick={() => onStart(m.goal, m)} disabled={busy}
-                    className={`group flex flex-col rounded-2xl border bg-gradient-to-br p-4 text-left shadow-card transition-all hover:-translate-y-0.5 hover:shadow-lift disabled:opacity-60 ${ACCENT[m.accent] || ACCENT.sky}`}>
+            <button key={m.id} type="button" onClick={() => slug && onStart(slug, m.goal, m)} disabled={busy || !slug}
+                    className={`group flex flex-col rounded-2xl border bg-gradient-to-br p-4 text-left shadow-card transition-all hover:-translate-y-0.5 hover:shadow-lift disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 ${ACCENT[m.accent] || ACCENT.sky}`}>
               <div className="flex items-start justify-between">
                 <span className="text-3xl" aria-hidden="true">{m.emoji}</span>
                 <span className="chip border-white/60 bg-white/70 text-stone-600"><Hand className="h-3 w-3" aria-hidden="true" />~{m.approvals} approvals</span>
@@ -106,6 +166,13 @@ export default function Gallery({ missions, world, memories, offlinePilot, auton
               <span className="mt-4 flex items-center gap-1 text-sm font-semibold text-ink opacity-70 transition-opacity group-hover:opacity-100">Launch <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden="true" /></span>
             </button>
           ))}
+          <form className="flex flex-col rounded-2xl border border-dashed border-stone-300 bg-white/60 p-4" onSubmit={(e) => { e.preventDefault(); if (slug && goal.trim()) onStart(slug, goal.trim(), null); }}>
+            <span className="text-3xl" aria-hidden="true">✍️</span>
+            <h3 className="mt-3 text-base font-semibold leading-snug text-ink">Your own goal</h3>
+            <textarea className="field mt-2 min-h-20 flex-1 text-[13px]" value={goal} onChange={(e) => setGoal(e.target.value)}
+                      placeholder={offlinePilot ? "Needs a real model — add one under Model in the header." : "e.g. Find issues that are really feature requests and relabel them"} aria-label="Your goal" />
+            <button type="submit" className="btn-accent mt-3 self-start" disabled={busy || !slug || !goal.trim()}><Rocket className="h-4 w-4" aria-hidden="true" /> Launch</button>
+          </form>
         </div>
       </section>
     </div>

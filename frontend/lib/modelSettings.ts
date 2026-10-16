@@ -8,6 +8,7 @@
 // localStorage when the user ticks "Remember on this device".
 
 import { useEffect, useState } from "react";
+import { githubHeaders } from "./github";
 
 export interface ModelSettings {
   provider: string; // preset id from GET /model/providers (e.g. "anthropic")
@@ -94,9 +95,9 @@ export function llmHeaders(settings?: ModelSettings | null): Record<string, stri
   return headers;
 }
 
-/** JSON request headers plus the model choice — use for every model-backed call. */
+/** JSON request headers plus the model choice and GitHub token — use for every API call. */
 export function apiHeaders(): Record<string, string> {
-  return { "Content-Type": "application/json", ...llmHeaders() };
+  return { "Content-Type": "application/json", ...llmHeaders(), ...githubHeaders() };
 }
 
 /** Current settings, kept in sync when the settings dialog saves or clears. */
@@ -130,7 +131,10 @@ export async function ensureOk(res: Response): Promise<Response> {
 /** The message to show for a failed call: the model-settings reason, or a fallback. */
 export function describeError(error: unknown, fallback: string): string {
   if (error instanceof ApiError && error.message.startsWith("Model settings:")) {
-    return `${error.message} Open ⚙ Model to fix it.`;
+    return `${error.message} Open Model to fix it.`;
+  }
+  if (error instanceof ApiError && error.message.startsWith("GitHub:")) {
+    return error.message;
   }
   return fallback;
 }

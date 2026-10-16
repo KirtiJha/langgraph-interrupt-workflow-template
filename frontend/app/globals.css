@@ -91,3 +91,14 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* Markdown inside previews and comments (GitHub-flavoured, compact). */
+.prose-steward p { margin: 0.35rem 0; }
+.prose-steward ul, .prose-steward ol { margin: 0.35rem 0; padding-left: 1.1rem; list-style: disc; }
+.prose-steward ol { list-style: decimal; }
+.prose-steward code { font-size: 0.8em; background: rgb(28 25 23 / 0.06); padding: 0.1rem 0.3rem; border-radius: 0.3rem; }
+.prose-steward pre { margin: 0.4rem 0; padding: 0.6rem; border-radius: 0.5rem; background: rgb(28 25 23 / 0.06); overflow: auto; font-size: 0.8em; }
+.prose-steward pre code { background: none; padding: 0; }
+.prose-steward h1, .prose-steward h2, .prose-steward h3 { font-weight: 600; margin: 0.6rem 0 0.25rem; font-size: 0.95em; }
+.prose-steward strong { font-weight: 600; }
+.prose-steward a { color: #c2410c; text-decoration: underline; text-underline-offset: 2px; }

@@ -218,7 +218,7 @@ def close_issue(runtime: ToolRuntime, number: int, reason: str = "completed", no
     ops: list[dict] = []
     if note:
         ops.append({"op": "comment", "number": number, "body": note})
-    ops.append({"op": "close", "number": number, "reason": "not_planned" if reason == "duplicate" else reason})
+    ops.append({"op": "close", "number": number, "reason": reason})
     _emit(f"✅ Closing #{number} ({reason})")
     return _act(runtime, ops, f"Closed #{number} as {reason}.")
 

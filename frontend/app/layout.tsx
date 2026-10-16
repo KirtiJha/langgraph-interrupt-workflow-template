@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Mission Control",
-  description: "A personal agent that gets real-life jobs done — and asks before anything that matters.",
+  title: "Repo Steward",
+  description: "A maintainer agent for GitHub repositories that asks before anything public happens.",
 };
 
 export const viewport = {

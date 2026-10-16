@@ -269,8 +269,9 @@ class GitHub:
             return data.get("html_url", "")
         elif kind == "close":
             payload = {"state": "closed"}
-            if op.get("reason") in ("completed", "not_planned"):
-                payload["state_reason"] = op["reason"]
+            reason = {"duplicate": "not_planned"}.get(op.get("reason"), op.get("reason"))
+            if reason in ("completed", "not_planned"):
+                payload["state_reason"] = reason
             self._request("PATCH", f"{base}/issues/{n}", write=True, json=payload)
         elif kind == "reopen":
             self._request("PATCH", f"{base}/issues/{n}", write=True, json={"state": "open"})
