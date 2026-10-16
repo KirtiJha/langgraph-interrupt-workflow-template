@@ -57,13 +57,22 @@ def run_agent(question: str, build: Callable = build_agent) -> dict:
         state = agent.invoke({"messages": [{"role": "user", "content": question}]}, config)
         guard = 0
         while isinstance(state, dict) and "__interrupt__" in state and guard < 6:
-            value = state["__interrupt__"][0].value
-            requests = value.get("action_requests", []) if isinstance(value, dict) else []
-            if requests:
+            interrupts = state["__interrupt__"]
+            value = interrupts[0].value
+            if isinstance(value, dict) and value.get("type") == "tool_approval":
+                # per_call mode (langchain >= 1.4.6): one interrupt per tool call,
+                # answered by interrupt id.
                 result["paused"] = True
-                result["tool"] = requests[0].get("name")
-            decisions = [{"type": "approve"}] * (len(requests) or 1)
-            state = agent.invoke(Command(resume={"decisions": decisions}), config)
+                result["tool"] = value.get("name")
+                resume = {i.id: {"type": "approve"} for i in interrupts}
+            else:
+                # batched mode: one interrupt listing every call, answered in order.
+                requests = value.get("action_requests", []) if isinstance(value, dict) else []
+                if requests:
+                    result["paused"] = True
+                    result["tool"] = requests[0].get("name")
+                resume = {"decisions": [{"type": "approve"}] * (len(requests) or 1)}
+            state = agent.invoke(Command(resume=resume), config)
             guard += 1
         messages = state.get("messages", []) if isinstance(state, dict) else []
         result["answer"] = (getattr(messages[-1], "content", "") if messages else "") or ""

@@ -27,6 +27,7 @@ from langchain.agents.middleware import HumanInTheLoopMiddleware
 from pydantic import BaseModel, Field
 
 import run_control
+from approval_policy import build_interrupt_on
 from guardrails import GuardrailMiddleware
 from llm import get_llm, text_of
 from middleware_pack import build_middleware_pack
@@ -93,6 +94,7 @@ def build_agent(
     store: Any | None = None,
     extra_tools: Optional[list] = None,
     structured: Optional[bool] = None,
+    interrupt_mode: Optional[str] = None,
 ):
     """Build a tool-using agent that requires approval before sensitive tools.
 
@@ -116,10 +118,16 @@ def build_agent(
     tools = [*AGENT_TOOLS, *(extra_tools or [])]
     model = get_llm()
 
-    # Gate every tool (built-in + MCP) behind human approval.
+    # Which tools pause for approval (and when) comes from approval_policy.
+    # Per-call mode (langchain>=1.4.6) raises one interrupt per tool call, each
+    # carrying a JSON `response_schema` of the decisions it accepts; LangChain
+    # plans to make it the default. `HITL_INTERRUPT_MODE=batched` restores the
+    # one-interrupt-per-turn behaviour.
+    mode = interrupt_mode or os.getenv("HITL_INTERRUPT_MODE", "per_call")
     hitl = HumanInTheLoopMiddleware(
-        interrupt_on={t.name: True for t in tools},
+        interrupt_on=build_interrupt_on(t.name for t in tools),
         description_prefix="The agent wants to run a tool and needs your approval",
+        interrupt_mode=mode,
     )
 
     # Middleware order (outermost first): guardrail → prebuilt power-pack → HITL.
@@ -149,15 +157,66 @@ def build_agent(
 agent = build_agent()
 
 
-def _pending_interrupt(value: Any) -> dict:
-    """Normalize a HITLMiddleware interrupt request for the client."""
-    requests = value.get("action_requests", []) if isinstance(value, dict) else []
-    configs = value.get("review_configs", [{}]) if isinstance(value, dict) else [{}]
-    allowed = configs[0].get("allowed_decisions", ["approve", "reject"]) if configs else [
-        "approve",
-        "reject",
-    ]
-    return {"tool_requests": requests, "allowed": allowed}
+def _decisions_from_schema(schema: Any) -> List[str]:
+    """Read the allowed decision types out of a per-call ``response_schema``.
+
+    The schema has one ``$defs`` entry per decision (``ApproveDecision``,
+    ``EditDecision`` …), each with a ``type`` const. Returned in canonical order.
+    """
+    found: set[str] = set()
+    for definition in (schema or {}).get("$defs", {}).values():
+        const = (definition.get("properties", {}).get("type", {}) or {}).get("const")
+        if const:
+            found.add(const)
+    return [d for d in ("approve", "edit", "respond", "reject") if d in found]
+
+
+def _pending_interrupt(interrupts: Any) -> dict:
+    """Normalize pending HITL interrupts for the client.
+
+    Handles both middleware modes:
+
+    - **per_call** — one ``Interrupt`` per tool call, ``value['type'] ==
+      'tool_approval'``, answered by ``interrupt.id``. The ``response_schema``
+      is forwarded so the UI can build a validated form from it.
+    - **batched** — one ``Interrupt`` with ``action_requests`` /
+      ``review_configs``, answered with an ordered decisions list.
+    """
+    requests: list[dict] = []
+    for intr in interrupts or []:
+        value = getattr(intr, "value", intr)
+        if not isinstance(value, dict):
+            continue
+        if value.get("type") == "tool_approval":  # per_call
+            schema = getattr(intr, "response_schema", None)
+            requests.append(
+                {
+                    "interrupt_id": getattr(intr, "id", None),
+                    "name": value.get("name"),
+                    "args": value.get("args", {}),
+                    "description": value.get("description", ""),
+                    "allowed": _decisions_from_schema(schema) or ["approve", "reject"],
+                    "response_schema": schema,
+                }
+            )
+        elif "action_requests" in value:  # batched
+            configs = value.get("review_configs", [])
+            for idx, req in enumerate(value["action_requests"]):
+                cfg = configs[idx] if idx < len(configs) else (configs[0] if configs else {})
+                requests.append(
+                    {
+                        "interrupt_id": None,
+                        **req,
+                        "allowed": cfg.get("allowed_decisions", ["approve", "reject"]),
+                    }
+                )
+    allowed = requests[0]["allowed"] if requests else ["approve", "reject"]
+    per_call = bool(requests and requests[0]["interrupt_id"])
+    return {
+        "tool_requests": requests,
+        "allowed": allowed,  # kept for older clients; prefer per-request `allowed`
+        "interrupt_mode": "per_call" if per_call else "batched",
+    }
 
 
 async def stream_agent_response(graph, thread_id: str, command_input, config: Optional[dict] = None):
@@ -167,7 +226,7 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
     ``Command(resume=...)`` (to resume after an approval decision).
     """
     config = config or {"configurable": {"thread_id": thread_id}}
-    interrupt_value = None
+    pending_interrupts: list = []
     # Register a control so POST /cancel can drain this run gracefully.
     control = run_control.new_control(thread_id)
     cancelled = False
@@ -185,7 +244,7 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
                 yield event
             elif mode == "updates" and isinstance(data, dict):
                 if "__interrupt__" in data:
-                    interrupt_value = data["__interrupt__"][0].value
+                    pending_interrupts = list(data["__interrupt__"])
                 elif "tools" in data:
                     yield {"type": "progress", "message": "🔧 Tool executed — synthesizing…"}
             elif mode == "messages":
@@ -232,8 +291,8 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
                 if hasattr(structured, "model_dump")
                 else structured
             )
-        if interrupt_value is not None:
-            event.update(_pending_interrupt(interrupt_value))
+        if pending_interrupts:
+            event.update(_pending_interrupt(pending_interrupts))
         yield event
         yield {"type": "done", "content": "", "done": True}
     except Exception as exc:  # pragma: no cover - surfaced to the client
