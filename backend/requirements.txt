@@ -1,7 +1,7 @@
 # Core framework — LangGraph & LangChain v1 (stable; no breaking changes until 2.0)
-langgraph>=1.2,<2
-langchain>=1.3,<2
-langchain-core>=1.4,<2
+langgraph>=1.2.15,<2
+langchain>=1.4.6,<2
+langchain-core>=1.6,<2
 
 # Durable, resumable checkpointing
 langgraph-checkpoint-sqlite>=3.1,<4
@@ -9,7 +9,7 @@ aiosqlite>=0.20
 
 # Deep Agent engine (planning + subagents). Optional — the app boots without it,
 # with the Deep Agent engine disabled.
-deepagents>=0.6,<1
+deepagents>=0.7,<1
 
 # AG-UI protocol adapter — exposes the agent to any AG-UI client (CopilotKit,
 # etc.) at /agui. Optional — the app boots without it (endpoint just not mounted).

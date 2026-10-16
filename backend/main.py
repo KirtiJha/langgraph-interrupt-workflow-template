@@ -39,6 +39,7 @@ from agui import AGUI_AVAILABLE, AGUI_PATH, mount_agui
 from approval_workflow import build_approval_graph
 from graph import build_research_graph, resilience_config, stream_research_response
 from guardrails import GuardrailMiddleware
+import approval_policy
 import run_control
 from llm import requests_per_second, using_mock_llm
 from mcp_tools import load_mcp_tools
@@ -86,6 +87,7 @@ def _capabilities(store, mcp_tools) -> dict:
         "resilience": resilience_config(),
         "agui": {"enabled": AGUI_AVAILABLE, "path": AGUI_PATH if AGUI_AVAILABLE else None},
         "graceful_cancel": run_control.CANCEL_SUPPORTED,
+        "hitl": approval_policy.describe(),
         "deep_agent": {
             "installed": DEEP_AGENT_ENABLED,
             "available": deep_agent_available(),
@@ -188,11 +190,20 @@ class AgentStart(BaseModel):
 
 class AgentDecision(BaseModel):
     thread_id: str
-    # One decision per pending tool call, e.g.
-    #   {"type": "approve"}
-    #   {"type": "edit", "edited_action": {"name": "web_search", "args": {...}}}
-    #   {"type": "reject", "message": "..."}  /  {"type": "respond", "message": "..."}
-    decisions: list[dict]
+    # Per-call mode (default): a dict keyed by interrupt id, e.g.
+    #   {"<interrupt_id>": {"type": "approve"}}
+    # Batched mode: one decision per pending tool call, in order, e.g.
+    #   [{"type": "approve"}]
+    #   [{"type": "edit", "edited_action": {"name": "web_search", "args": {...}}}]
+    #   [{"type": "reject", "message": "..."}]  /  [{"type": "respond", "message": "..."}]
+    decisions: list[dict] | dict[str, dict]
+
+
+def _resume_command(decisions: list[dict] | dict[str, dict]) -> Command:
+    """Build the resume for either HITL interrupt mode from a client decision."""
+    if isinstance(decisions, dict):
+        return Command(resume=decisions)  # per_call: keyed by interrupt id
+    return Command(resume={"decisions": decisions})  # batched: ordered list
 
 
 class CancelRequest(BaseModel):
@@ -517,7 +528,7 @@ async def agent_decide(data: AgentDecision, request: Request):
     """Resume the agent with approve / edit / reject / respond decisions."""
     graph = request.app.state.agent_graph
     config = {"configurable": {"thread_id": data.thread_id}}
-    command = Command(resume={"decisions": data.decisions})
+    command = _resume_command(data.decisions)
     return _sse(stream_agent_response(graph, data.thread_id, command, config))
 
 
@@ -572,7 +583,7 @@ async def deep_decide(data: AgentDecision, request: Request):
     if graph is None:
         raise HTTPException(status_code=503, detail="Deep Agent engine is not available.")
     config = {"configurable": {"thread_id": data.thread_id}}
-    command = Command(resume={"decisions": data.decisions})
+    command = _resume_command(data.decisions)
     return _sse(stream_agent_response(graph, data.thread_id, command, config))
 
 

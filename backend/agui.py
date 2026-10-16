@@ -45,7 +45,9 @@ def mount_agui(app, store=None) -> bool:
     if not AGUI_AVAILABLE:
         return False
     try:
-        graph = build_agent(checkpointer=MemorySaver(), store=store)
+        # The AG-UI adapter was written against the one-interrupt-per-turn
+        # (batched) HITL shape, so pin it here regardless of HITL_INTERRUPT_MODE.
+        graph = build_agent(checkpointer=MemorySaver(), store=store, interrupt_mode="batched")
         agent = LangGraphAgent(
             name="research_agent",
             description=(

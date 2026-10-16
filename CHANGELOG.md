@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-call human-in-the-loop** (`HITL_INTERRUPT_MODE=per_call`, now the
+  default): with langchain ≥ 1.4.6 each gated tool call raises its own
+  interrupt, answered by interrupt id, and carries a JSON `response_schema` of
+  the decisions it accepts. The agent stream forwards `interrupt_id`, per-request
+  `allowed` decisions and the schema; the approval card now builds its edit form
+  from the tool's real argument schema (typed fields, required markers,
+  descriptions) and edits are validated server-side before the agent resumes.
+  `/agent/decide` and `/deep/decide` accept either an id-keyed dict (per-call)
+  or the ordered list (batched); `HITL_INTERRUPT_MODE=batched` restores the
+  old contract.
+- **Approval policy** (`backend/approval_policy.py`): one env-configurable rule
+  for *which* tools pause and *when*, shared by the agent, deep agent and MCP
+  tools. `HITL_POLICY=all` (default) gates every acting tool while exempting
+  read-only ones (`HITL_NEVER`); `HITL_POLICY=selective` gates only
+  `HITL_ALWAYS` tools unconditionally and uses an `InterruptOnConfig.when`
+  predicate to pause other tools **only when their arguments look risky**
+  (`HITL_SENSITIVE_PATTERNS`) — "approve the risky 5%, not every call".
+- **Tool resilience middleware**: `ToolRetryMiddleware` + `ToolErrorMiddleware`
+  (on by default) so a failing tool is retried and then surfaced to the model as
+  a recoverable error instead of crashing the run; opt-in
+  `ContextEditingMiddleware` (`AGENT_CONTEXT_EDIT_TOKENS`) clears stale tool
+  outputs on long threads.
+
+### Fixed
+- **deepagents 0.7 regression**: the default deep agent no longer includes the
+  to-do list, so our prompt's `write_todos` step pointed at a missing tool —
+  `TodoListMiddleware` is now passed explicitly. 0.7 also exposes **`execute`
+  (a shell) and `delete`** by default, which were ungated; the approval policy
+  now gates them. Pins bumped to langchain ≥ 1.4.6, langgraph ≥ 1.2.15,
+  deepagents ≥ 0.7.
 - **Graceful cancel** (`backend/run_control.py`, `POST /cancel`): stop an
   in-flight run using LangGraph 1.2's cooperative drain (`RunControl`). The run
   finishes its current superstep, **checkpoints its progress, and raises

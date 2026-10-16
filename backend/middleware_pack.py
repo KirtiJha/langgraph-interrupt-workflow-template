@@ -54,6 +54,21 @@ def _int_env(name: str, default: int | None) -> int | None:
         return default
 
 
+def _describe_tool_error(*args: Any, **kwargs: Any) -> str:
+    """``ToolErrorMiddleware`` handler: turn a tool exception into a message.
+
+    Returning a string converts the exception into a ``ToolMessage`` with
+    ``status="error"`` so the model can recover (retry differently, or tell the
+    user) instead of the whole run crashing.
+    """
+    exc = next((a for a in args if isinstance(a, BaseException)), None)
+    detail = f"{type(exc).__name__}: {exc}" if exc else "unknown error"
+    return (
+        f"The tool failed ({detail}). Try a different approach or explain the "
+        "problem to the user — do not pretend the tool succeeded."
+    )
+
+
 def build_middleware_pack(model: Any) -> tuple[list, list[str]]:
     """Return ``(middleware, active_names)`` for the configured power-pack.
 
@@ -116,6 +131,38 @@ def build_middleware_pack(model: Any) -> tuple[list, list[str]]:
             active.append(f"model_fallback({fallback_model})")
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Could not enable model fallback: %s", exc)
+
+    # 7) Tool resilience — a failing tool becomes an error message the model can
+    #    recover from (instead of crashing the run), with retries for transient
+    #    failures. On by default; both are langchain>=1.3.14.
+    if _truthy(os.getenv("AGENT_TOOL_RESILIENCE"), default=True):
+        try:
+            from langchain.agents.middleware import ToolErrorMiddleware, ToolRetryMiddleware
+
+            tool_retries = _int_env("AGENT_TOOL_RETRIES", 2) or 2
+            # Build both first so a constructor error can't leave the lists out of step.
+            resilience = [
+                ToolRetryMiddleware(max_retries=tool_retries),
+                ToolErrorMiddleware(on_error=_describe_tool_error),
+            ]
+            middleware.extend(resilience)
+            active.extend([f"tool_retry({tool_retries})", "tool_error_recovery"])
+        except Exception as exc:  # pragma: no cover - older langchain
+            logger.warning("Tool resilience middleware unavailable: %s", exc)
+
+    # 8) Context editing — opt-in; clears stale tool outputs once the context
+    #    grows past a token budget (complements summarization on long threads).
+    context_budget = _int_env("AGENT_CONTEXT_EDIT_TOKENS", None)
+    if context_budget:
+        try:
+            from langchain.agents.middleware import ClearToolUsesEdit, ContextEditingMiddleware
+
+            middleware.append(
+                ContextEditingMiddleware(edits=[ClearToolUsesEdit(trigger=context_budget)])
+            )
+            active.append(f"context_editing(>{context_budget} tokens)")
+        except Exception as exc:  # pragma: no cover - older langchain
+            logger.warning("Context editing middleware unavailable: %s", exc)
 
     return middleware, active
 

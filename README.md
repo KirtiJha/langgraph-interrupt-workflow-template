@@ -61,6 +61,8 @@ All three share the same provider-agnostic LLM, `web_search` tool, and long-term
 - **♻️ Resilient workflow (LangGraph 1.2)** — per-node **retries**, **timeouts**, and **compensation** (`error_handler`) so failures degrade gracefully instead of 500ing.
 - **🛑 Graceful cancel** — a **Stop** button that drains the run at a safe boundary: it finishes the current step, **checkpoints**, and stays **resumable** — no corrupted state.
 - **🚦 Rate-limit friendly** — a client-side request cap plus a parallelism cap, so free/low-tier provider keys don't get throttled into 429 stalls.
+- **🎯 Approval policy, not approve-everything** — one env-configurable rule for *which* tools pause and *when*: gate shell/delete/writes always, exempt read-only tools, and (optionally) pause other calls **only when their arguments look risky**.
+- **🧾 Schema-validated, per-call approvals** — each tool call interrupts on its own with a JSON `response_schema`; the approval form is generated from the tool's real argument schema and edits are validated before the agent resumes.
 - **🔌 Provider-agnostic** — OpenAI, Anthropic, Google, Groq, Mistral, IBM watsonx, Ollama… via LangChain's `init_chat_model`. One env var to switch.
 - **🆓 Zero-config demo** — a streaming-capable mock model runs the whole app with **no API keys**.
 - **💾 Durable execution** — optional `AsyncSqliteSaver` checkpointer; workflows survive server restarts.
@@ -307,6 +309,38 @@ LLM_REQUESTS_PER_SECOND=0.5      # client-side request cap (all providers)
 RESEARCH_MAX_SUBQUERIES=2        # fewer parallel sub-researchers
 ```
 
+**Per-call approvals with a response schema (langchain ≥ 1.4.6).** The agent
+runs `HumanInTheLoopMiddleware(interrupt_mode="per_call")`: every gated tool
+call raises its *own* interrupt, answered by id, and each one carries a JSON
+`response_schema` of the decisions it accepts — including the tool's real
+argument schema for edits. The approval card builds its form from that schema
+(typed fields, required markers, descriptions), and an edited call is validated
+server-side before the agent resumes. LangChain plans to make per-call the
+default; `HITL_INTERRUPT_MODE=batched` keeps the one-interrupt-per-turn shape.
+(The `/agui` adapter is pinned to batched mode, which is the shape AG-UI
+clients expect.)
+
+```python
+# resume: one decision per interrupt, keyed by its id
+Command(resume={interrupt.id: {"type": "approve"}})
+```
+
+**Approval policy — which tools pause, and when.** `approval_policy.py` turns a
+few env vars into the `interrupt_on` map every engine uses. The default
+(`HITL_POLICY=all`) pauses every tool that *acts* while exempting read-only ones
+(`ls`, `read_file`, …) — so a deep agent isn't asking permission to list its own
+scratch space, but **`execute` (shell), `delete` and writes always are**. Flip to
+`HITL_POLICY=selective` and only `HITL_ALWAYS` tools pause unconditionally;
+everything else pauses *only when its arguments look risky*, via an
+`InterruptOnConfig.when` predicate:
+
+```python
+InterruptOnConfig(allowed_decisions=[...], when=lambda req: looks_sensitive(req.tool_call["args"]))
+```
+
+That's the "approve the risky 5%, not every call" pattern that keeps agents
+usable in practice — defined once, applied to built-in, deep-agent and MCP tools.
+
 The active feature set is reported by `GET /capabilities` and shown as a status
 strip in the chat header.
 
@@ -391,6 +425,11 @@ All configuration is via environment variables (see [`backend/.env.example`](bac
 | `NODE_TIMEOUT_SECONDS` | Per-node wall-clock timeout | off |
 | `LLM_REQUESTS_PER_SECOND` | Client-side request cap (smooths bursts on rate-limited keys) | off |
 | `RESEARCH_MAX_SUBQUERIES` | Cap parallel sub-researchers in the workflow | unclamped |
+| `HITL_INTERRUPT_MODE` | `per_call` (one interrupt per tool call, answered by id) or `batched` | `per_call` |
+| `HITL_POLICY` | `all` (every acting tool pauses) or `selective` (risky args only) | `all` |
+| `HITL_ALWAYS` / `HITL_NEVER` | Tools that always / never pause for approval | shell, delete, writes / read-only |
+| `HITL_SENSITIVE_PATTERNS` | Regex that makes a call "risky" in selective mode | passwords, keys, deletes… |
+| `AGENT_TOOL_RESILIENCE` | Retry transient tool errors and surface failures to the model | `true` |
 | `CORS_ORIGINS` | Comma-separated allowed origins | `*` |
 | `PORT` | Backend port | `8000` |
 

@@ -486,7 +486,13 @@ export default function ChatInterface() {
               options: [],
               agent: {
                 toolRequests: data.tool_requests,
-                allowed: data.allowed || ["approve", "reject"],
+                // Per-call HITL: each interrupt carries its own id, allowed
+                // decisions, and a JSON response_schema (langchain >= 1.4.6).
+                allowed:
+                  data.tool_requests[0]?.allowed ||
+                  data.allowed || ["approve", "reject"],
+                interruptId: data.tool_requests[0]?.interrupt_id ?? null,
+                responseSchema: data.tool_requests[0]?.response_schema ?? null,
               },
             });
           } else if (data.final_response && !assistantAdded) {
@@ -530,9 +536,12 @@ export default function ChatInterface() {
 
   const agentDecide = async (decisions: Record<string, unknown>[]) => {
     if (!threadId) return;
+    // Per-call interrupts are answered by id; batched ones by ordered list.
+    const interruptId = interruptData?.agent?.interruptId;
+    const payload = interruptId ? { [interruptId]: decisions[0] } : decisions;
     await consumeAgentStream(`${agentBase()}/decide`, {
       thread_id: threadId,
-      decisions,
+      decisions: payload,
     });
   };
 
@@ -666,6 +675,12 @@ export default function ChatInterface() {
     if (!req) return null;
 
     const argEntries = Object.entries(req.args ?? {});
+    // Per-call interrupts ship a JSON schema for the tool's arguments
+    // (response_schema.$defs[<tool>]) — use it to label, type, and mark fields.
+    const argSchema = interruptData?.agent?.responseSchema?.$defs?.[req.name];
+    const argProps: Record<string, any> = argSchema?.properties ?? {};
+    const requiredArgs: string[] = argSchema?.required ?? [];
+    const schemaDriven = Object.keys(argProps).length > 0;
     // Per-field editing works when every arg is a primitive ("flat").
     const flat = argEntries.every(([, v]) => typeof v !== "object" || v === null);
     const coerce = (s: string): any => {
@@ -716,6 +731,14 @@ export default function ChatInterface() {
           </div>
           <code className="text-[11px] font-semibold bg-purple-100 text-purple-800 rounded-full px-2 py-0.5">
             {req.name}()
+            {schemaDriven && (
+              <span
+                className="ml-1.5 font-normal text-purple-500"
+                title="Edits are validated against the tool's argument schema before the agent resumes"
+              >
+                · schema-validated
+              </span>
+            )}
           </code>
         </div>
 
@@ -730,11 +753,23 @@ export default function ChatInterface() {
                   key={key}
                   className="grid grid-cols-3 gap-2 items-center px-3 py-2"
                 >
-                  <span className="text-xs font-medium text-gray-500 truncate">
-                    {key}
+                  <span
+                    className="text-xs font-medium text-gray-500 truncate"
+                    title={argProps[key]?.description || key}
+                  >
+                    {argProps[key]?.title || key}
+                    {requiredArgs.includes(key) && (
+                      <span className="text-rose-500" title="required"> *</span>
+                    )}
                   </span>
                   {mode === "edit" ? (
                     <input
+                      type={
+                        ["number", "integer"].includes(argProps[key]?.type)
+                          ? "number"
+                          : "text"
+                      }
+                      placeholder={argProps[key]?.description || ""}
                       value={agentArgs[key] ?? ""}
                       onChange={(e) =>
                         setAgentArgs((p) => ({ ...p, [key]: e.target.value }))

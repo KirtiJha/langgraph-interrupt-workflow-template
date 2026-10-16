@@ -291,19 +291,32 @@ def test_agent_start_pauses_for_tool_approval(client):
     assert any(e["type"] == "thread" for e in events)
     state = next(e for e in events if e["type"] == "state")
     assert state["requires_input"] is True
-    assert state["tool_requests"][0]["name"] == "web_search"
-    assert "approve" in state["allowed"] and "edit" in state["allowed"]
+    req = state["tool_requests"][0]
+    assert req["name"] == "web_search"
+    # Per-call HITL (langchain >= 1.4.6): each interrupt has an id, its own
+    # allowed decisions, and a JSON response_schema the UI can build a form from.
+    assert state["interrupt_mode"] == "per_call"
+    assert req["interrupt_id"]
+    assert "approve" in req["allowed"] and "edit" in req["allowed"]
+    assert "web_search" in req["response_schema"]["$defs"]  # tool arg schema for edits
+
+
+def _approve_by_id(client, path, thread_id, state, decision=None):
+    """Resume a per-call interrupt, keyed by its id."""
+    req = state["tool_requests"][0]
+    return _sse(
+        client,
+        "POST",
+        path,
+        json={"thread_id": thread_id, "decisions": {req["interrupt_id"]: decision or {"type": "approve"}}},
+    )
 
 
 def test_agent_approve_completes(client):
     events = _sse(client, "POST", "/agent/start", json={"message": "research wind"})
     thread_id = next(e["thread_id"] for e in events if e["type"] == "thread")
-    resumed = _sse(
-        client,
-        "POST",
-        "/agent/decide",
-        json={"thread_id": thread_id, "decisions": [{"type": "approve"}]},
-    )
+    pending = next(e for e in events if e["type"] == "state")
+    resumed = _approve_by_id(client, "/agent/decide", thread_id, pending)
     state = next(e for e in resumed if e["type"] == "state")
     assert state["requires_input"] is False
     assert state["final_response"]
@@ -313,21 +326,97 @@ def test_agent_approve_completes(client):
 
 
 def test_agent_edit_tool_args(client):
+    """Edits are validated against the tool's own argument schema, then run."""
     events = _sse(client, "POST", "/agent/start", json={"message": "research solar"})
     thread_id = next(e["thread_id"] for e in events if e["type"] == "thread")
-    resumed = _sse(
+    pending = next(e for e in events if e["type"] == "state")
+    resumed = _approve_by_id(
         client,
-        "POST",
         "/agent/decide",
-        json={
-            "thread_id": thread_id,
-            "decisions": [
-                {"type": "edit", "edited_action": {"name": "web_search", "args": {"query": "edited"}}}
-            ],
-        },
+        thread_id,
+        pending,
+        {"type": "edit", "edited_action": {"name": "web_search", "args": {"query": "edited"}}},
     )
     state = next(e for e in resumed if e["type"] == "state")
     assert state["requires_input"] is False
+    assert not [e for e in resumed if e.get("type") == "error"]
+
+
+def test_agent_batched_mode_still_supported():
+    """HITL_INTERRUPT_MODE=batched keeps the one-interrupt-per-turn contract."""
+    import asyncio
+
+    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.types import Command
+
+    from agent import build_agent, stream_agent_response
+
+    async def run():
+        graph = build_agent(checkpointer=MemorySaver(), interrupt_mode="batched")
+        config = {"configurable": {"thread_id": "batched-1"}}
+        first = [
+            e
+            async for e in stream_agent_response(
+                graph, "batched-1", {"messages": [{"role": "user", "content": "research x"}]}, config
+            )
+        ]
+        state = next(e for e in first if e["type"] == "state")
+        assert state["interrupt_mode"] == "batched"
+        assert state["tool_requests"][0]["interrupt_id"] is None
+        second = [
+            e
+            async for e in stream_agent_response(
+                graph, "batched-1", Command(resume={"decisions": [{"type": "approve"}]}), config
+            )
+        ]
+        assert [e for e in second if e["type"] == "state"][-1]["requires_input"] is False
+
+    asyncio.run(run())
+
+
+# --- Approval policy (which tools pause, and when) --------------------------
+def test_approval_policy_default_gates_actions_not_reads(monkeypatch):
+    import approval_policy as ap
+
+    monkeypatch.delenv("HITL_POLICY", raising=False)
+    rules = ap.build_interrupt_on(["web_search", "execute", "delete", "ls", "read_file", "write_todos"])
+    # Read-only / planning tools never pause; anything that acts does.
+    for name in ("ls", "read_file", "write_todos"):
+        assert rules[name] is False
+    for name in ("web_search", "execute", "delete"):
+        assert rules[name] is not False
+        assert rules[name].get("when") is None  # unconditional in `all` mode
+
+
+def test_approval_policy_selective_pauses_only_on_risky_args(monkeypatch):
+    from types import SimpleNamespace
+
+    import approval_policy as ap
+
+    monkeypatch.setenv("HITL_POLICY", "selective")
+    rules = ap.build_interrupt_on(["web_search", "execute"])
+    assert rules["execute"].get("when") is None  # always gated
+    when = rules["web_search"]["when"]  # gated only when args look sensitive
+    risky = SimpleNamespace(tool_call={"name": "web_search", "args": {"query": "reset my password"}})
+    benign = SimpleNamespace(tool_call={"name": "web_search", "args": {"query": "tide tables"}})
+    assert when(risky) is True
+    assert when(benign) is False
+
+
+def test_deep_agent_restores_todos_and_gates_shell():
+    """deepagents 0.7 dropped write_todos and added shell/delete tools."""
+    from langgraph.checkpoint.memory import MemorySaver
+
+    import approval_policy as ap
+    from deep_agent import DEEP_TOOL_NAMES, build_deep_agent
+
+    graph = build_deep_agent(checkpointer=MemorySaver())
+    names = set(graph.nodes["tools"].bound.tools_by_name)
+    assert "write_todos" in names  # planning restored explicitly
+    assert {"execute", "delete"} <= names  # the new risky tools exist...
+    rules = ap.build_interrupt_on(DEEP_TOOL_NAMES)
+    assert rules["execute"] is not False and rules["delete"] is not False  # ...and are gated
+    assert rules["ls"] is False
 
 
 def test_approval_reject_redrafts_and_pauses_again(client):

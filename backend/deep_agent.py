@@ -30,6 +30,12 @@ from deepagents import SubAgent, create_deep_agent
 
 from llm import get_llm, using_mock_llm
 from tools import web_search
+import os
+from typing import Optional
+
+from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
+
+from approval_policy import build_interrupt_on
 
 logger = logging.getLogger(__name__)
 
@@ -79,19 +85,46 @@ def deep_agent_available() -> bool:
     return not using_mock_llm()
 
 
-def build_deep_agent(checkpointer: Any | None = None, store: Any | None = None):
+# Every tool a Deep Agent can call, so the approval policy can classify each
+# one up front. deepagents 0.7 added ``execute`` (a shell) and ``delete`` — both
+# gated by default; read-only scratch-space tools are not.
+DEEP_TOOL_NAMES = [
+    "web_search", "write_file", "edit_file", "delete", "execute",
+    "ls", "read_file", "glob", "grep", "task", "write_todos",
+]
+
+
+def build_deep_agent(
+    checkpointer: Any | None = None,
+    store: Any | None = None,
+    interrupt_mode: Optional[str] = None,
+):
     """Build the Deep Agent research orchestrator.
 
-    ``web_search`` is gated by human approval (``interrupt_on``) — the same
-    interrupt/resume mechanism the other engines use, so
-    ``Command(resume={"decisions": [{"type": "approve"}]})`` drives it.
+    Two things are passed explicitly rather than relying on deepagents' defaults:
+
+    - ``TodoListMiddleware`` — deepagents 0.7 dropped it from the default agent,
+      but planning with ``write_todos`` is the point of this engine, so it is
+      restored here (and works on 0.6 too).
+    - A ``HumanInTheLoopMiddleware`` built from :mod:`approval_policy`, which
+      **replaces** deepagents' built-in one (same ``.name``). That lets the
+      policy gate the shell/delete/write tools and use per-call interrupts.
+
+    Resume with ``Command(resume={interrupt_id: decision})`` in per-call mode
+    (the default) or ``Command(resume={"decisions": [...]})`` when batched.
     """
+    mode = interrupt_mode or os.getenv("HITL_INTERRUPT_MODE", "per_call")
+    hitl = HumanInTheLoopMiddleware(
+        interrupt_on=build_interrupt_on(DEEP_TOOL_NAMES),
+        description_prefix="The deep agent wants to run a tool and needs your approval",
+        interrupt_mode=mode,
+    )
     return create_deep_agent(
         model=get_llm(),
         tools=[web_search],
         system_prompt=MAIN_INSTRUCTIONS,
         subagents=[RESEARCHER, CRITIC],
-        interrupt_on={"web_search": True},
+        middleware=[TodoListMiddleware(), hitl],
         checkpointer=checkpointer,
         store=store,
     )
