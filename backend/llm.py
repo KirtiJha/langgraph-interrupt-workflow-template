@@ -50,6 +50,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
+import client_model
+
 logger = logging.getLogger(__name__)
 
 # Vercel AI Gateway's OpenAI-compatible endpoint.
@@ -236,7 +238,15 @@ class MockChatModel(BaseChatModel):
 
 
 def using_mock_llm() -> bool:
-    """Return True when ``get_llm`` would return the built-in mock model."""
+    """Return True when ``get_llm`` would return the built-in mock model.
+
+    A model chosen in the UI for this request takes precedence over the
+    server's defaults (including ``USE_MOCK_LLM``); owners who want to forbid
+    that set ``LLM_CLIENT_CONFIG=false``.
+    """
+    override = client_model.get_override()
+    if override is not None:
+        return bool(override.get("mock"))
     if _truthy(os.getenv("USE_MOCK_LLM")):
         return True
     has_model = bool(os.getenv("LLM_MODEL"))
@@ -263,34 +273,58 @@ def requests_per_second() -> Optional[float]:
         return None
 
 
+_LIMITER: Any = None
+_LIMITER_RPS: Optional[float] = None
+
+
 def _build_rate_limiter():
-    """Return an ``InMemoryRateLimiter`` when a rate cap is configured."""
+    """Return the shared ``InMemoryRateLimiter`` when a rate cap is configured.
+
+    Cached: every ``get_llm()`` call (one per workflow node) must share one
+    token bucket, otherwise each call would get a fresh, full bucket and the
+    cap would never actually throttle anything.
+    """
+    global _LIMITER, _LIMITER_RPS
     rps = requests_per_second()
     if rps is None:
         return None
+    if _LIMITER is not None and _LIMITER_RPS == rps:
+        return _LIMITER
     try:
         from langchain_core.rate_limiters import InMemoryRateLimiter
 
         # Allow a tiny burst (or 1 request) before throttling kicks in.
-        return InMemoryRateLimiter(
+        _LIMITER = InMemoryRateLimiter(
             requests_per_second=rps,
             check_every_n_seconds=min(0.1, 1 / rps),
             max_bucket_size=max(1.0, rps),
         )
+        _LIMITER_RPS = rps
+        return _LIMITER
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Could not enable the LLM rate limiter: %s", exc)
         return None
 
 
 def resolve_model_config() -> dict:
-    """Work out model / provider / endpoint / key from the environment.
+    """Work out model / provider / endpoint / key for the current request.
 
-    Precedence: an explicit ``LLM_BASE_URL`` (+ ``LLM_API_KEY``) wins; otherwise
-    ``AI_GATEWAY_API_KEY`` routes through Vercel AI Gateway; otherwise the
-    provider's own SDK and key are used. An OpenAI-compatible endpoint uses the
-    ``openai`` provider unless ``LLM_PROVIDER`` says otherwise (e.g. an
-    Anthropic-compatible proxy with ``LLM_PROVIDER=anthropic``).
+    A model chosen in the UI (``X-LLM-*`` headers, see :mod:`client_model`)
+    wins for that request. Otherwise, from the environment: an explicit
+    ``LLM_BASE_URL`` (+ ``LLM_API_KEY``); else ``AI_GATEWAY_API_KEY`` routes
+    through Vercel AI Gateway; else the provider's own SDK and key. An
+    OpenAI-compatible endpoint uses the ``openai`` provider unless
+    ``LLM_PROVIDER`` says otherwise (e.g. an Anthropic-compatible proxy).
     """
+    override = client_model.get_override()
+    if override is not None:
+        return {
+            "model": override["model"],
+            "provider": override["provider"],
+            "base_url": override["base_url"],
+            "api_key": override["api_key"],
+            "via": "client",
+        }
     base_url = os.getenv("LLM_BASE_URL", "").strip() or None
     api_key = os.getenv("LLM_API_KEY", "").strip() or None
     via = "provider"
@@ -313,14 +347,20 @@ def resolve_model_config() -> dict:
 
 
 def model_status() -> dict:
-    """What model the app is really using — for ``/capabilities`` and the UI.
+    """The *server's* default model — for ``/capabilities`` and the UI.
 
+    Always describes the environment configuration, never a visitor's
+    UI-chosen model (one visitor's settings must not show up for another).
     Never includes the API key; the base URL is reduced to its host.
     """
-    if using_mock_llm():
-        return {"mock": True, "name": None, "provider": None, "via": None, "endpoint": None, "error": None}
-    get_llm()  # construction only (no network): refreshes _MODEL_ERROR
-    cfg = resolve_model_config()
+    token = client_model._OVERRIDE.set(None)
+    try:
+        if using_mock_llm():
+            return {"mock": True, "name": None, "provider": None, "via": None, "endpoint": None, "error": None}
+        get_llm()  # construction only (no network): refreshes _MODEL_ERROR
+        cfg = resolve_model_config()
+    finally:
+        client_model._OVERRIDE.reset(token)
     host = urlparse(cfg["base_url"]).netloc if cfg["base_url"] else None
     return {
         "mock": _MODEL_ERROR is not None,  # a failed init falls back to the mock
@@ -333,25 +373,32 @@ def model_status() -> dict:
 
 
 def get_llm(**overrides: Any) -> BaseChatModel:
-    """Return a chat model based on environment configuration.
+    """Return the chat model for the current request.
 
-    Falls back to :class:`MockChatModel` when nothing is configured or when
-    initialisation fails, so the template always runs — a failure is recorded
-    in :func:`model_status` and logged loudly rather than hidden.
+    The UI-chosen model (``X-LLM-*`` headers) if present, else the server's
+    environment configuration. The server default falls back to
+    :class:`MockChatModel` when nothing is configured or initialisation fails,
+    recording the error for :func:`model_status`. A UI-chosen model that fails
+    raises instead — silently answering with the mock would mislead the user.
     """
     global _MODEL_ERROR
+    override = client_model.get_override()
     if using_mock_llm():
-        logger.info(
-            "Using built-in MockChatModel (no LLM_MODEL/provider key configured). "
-            "Set LLM_MODEL and a provider API key for real responses."
-        )
+        if override is None:
+            logger.info(
+                "Using built-in MockChatModel (no LLM_MODEL/provider key configured). "
+                "Set LLM_MODEL and a provider API key for real responses."
+            )
         return MockChatModel()
 
     cfg = resolve_model_config()
     params: dict[str, Any] = {}
     # Only send temperature when asked: some reasoning models reject anything
     # but their default.
-    if os.getenv("LLM_TEMPERATURE", "").strip():
+    if override is not None:
+        if override.get("temperature") is not None:
+            params["temperature"] = override["temperature"]
+    elif os.getenv("LLM_TEMPERATURE", "").strip():
         params["temperature"] = float(os.getenv("LLM_TEMPERATURE"))
     if cfg["base_url"]:
         params["base_url"] = cfg["base_url"]
@@ -362,15 +409,19 @@ def get_llm(**overrides: Any) -> BaseChatModel:
     rate_limiter = _build_rate_limiter()
     if rate_limiter is not None:
         params["rate_limiter"] = rate_limiter
-        logger.info("LLM rate limiting enabled (%.3g req/s)", requests_per_second())
 
     params.update(overrides)
 
     try:
         model = init_chat_model(cfg["model"], model_provider=cfg["provider"], **params)
-        _MODEL_ERROR = None
+        if override is None:
+            _MODEL_ERROR = None
         return model
     except Exception as exc:
+        if override is not None:
+            raise client_model.ClientModelConfigError(
+                client_model.scrub(f"Couldn't load model '{cfg['model']}': {exc}")
+            ) from None
         _MODEL_ERROR = f"{type(exc).__name__}: {exc}"[:300]
         logger.error(
             "Failed to initialise model '%s' (provider=%s): %s — FALLING BACK TO THE "

@@ -30,6 +30,7 @@ import approval_policy
 import run_control
 from approval_policy import build_interrupt_on
 from guardrails import GuardrailMiddleware
+from client_model import ClientModelMiddleware, scrub
 from llm import get_llm, text_of
 from middleware_pack import build_middleware_pack
 from tools import web_search
@@ -132,7 +133,8 @@ def build_agent(
     )
 
     # Middleware order (outermost first): guardrail → prebuilt power-pack → HITL.
-    middleware: list = []
+    # The visitor's model (UI settings) replaces the server's for each call.
+    middleware: list = [ClientModelMiddleware()]
     guardrail = GuardrailMiddleware.from_env()
     if guardrail is not None:
         middleware.append(guardrail)
@@ -263,7 +265,7 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
         yield {"type": "cancelled", "message": "Run stopped — progress was saved."}
     except Exception as exc:  # pragma: no cover - surfaced to the client
         logger.exception("Agent streaming error")
-        yield {"type": "error", "content": f"Error: {exc}", "done": True}
+        yield {"type": "error", "content": scrub(f"Error: {exc}"), "done": True}
         return
     finally:
         run_control.release(thread_id)
@@ -300,7 +302,7 @@ async def stream_agent_response(graph, thread_id: str, command_input, config: Op
         yield {"type": "done", "content": "", "done": True}
     except Exception as exc:  # pragma: no cover - surfaced to the client
         logger.exception("Agent streaming error")
-        yield {"type": "error", "content": f"Error: {exc}", "done": True}
+        yield {"type": "error", "content": scrub(f"Error: {exc}"), "done": True}
 
 
 def _demo(question: str) -> None:

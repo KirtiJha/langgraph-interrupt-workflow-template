@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Model settings in the UI** (`frontend/components/ModelSettings.tsx`,
+  `backend/client_model.py`): choose the provider, model, key, base URL and
+  temperature in the browser, test the connection and save. They are sent as
+  `X-LLM-*` headers and scoped to each request with a ContextVar, so all engines
+  use them, including Deep Agent subagents (through a `wrap_model_call`
+  middleware), and nothing is stored server-side. Errors are scrubbed of the
+  key. Custom base URLs are SSRF-checked on deployments. Owners can disable the
+  feature or share their key with `LLM_CLIENT_*`. New endpoints:
+  `GET /model/providers` and `POST /model/test`.
 - **Any provider, any model** (`backend/llm.py`): beyond native providers
   (OpenAI, Anthropic and Google SDKs now ship by default; `provider:model`
   strings supported), `LLM_BASE_URL` + `LLM_API_KEY` target **any
@@ -83,6 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Verified" label on every answer was removed.
 
 ### Fixed
+- `LLM_REQUESTS_PER_SECOND` now actually throttles. Each `get_llm()` call
+  previously created its own rate-limiter bucket.
 - **deepagents 0.7 regression**: the default deep agent no longer includes the
   to-do list, so our prompt's `write_todos` step pointed at a missing tool —
   `TodoListMiddleware` is now passed explicitly. 0.7 also exposes **`execute`
