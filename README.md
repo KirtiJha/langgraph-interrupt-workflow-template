@@ -134,8 +134,10 @@ open issues**, and decide. Then paste any public repository of your own.
    and **Pull requests: read & write**.
 2. Click **Connect GitHub** in the header and paste it. It stays in your
    browser (session storage, or local storage if you tick *Remember*).
-3. Load the repo — the badge flips to **write access** — and pick an autonomy
-   level. Approved actions now happen on GitHub, with links in the feed.
+3. Click the repository box: it now lists **every repository your token can
+   access** — search, sort by recent activity or open issues, and filter to the
+   ones you can act on (private repos included). Pick one; the badge flips to
+   **write access**. Approved actions now happen on GitHub, with links in the feed.
 
 Server-side alternative for a personal deployment: set `GITHUB_TOKEN` (used
 for reads: 5,000 requests/hour instead of 60) and `STEWARD_SERVER_TOKEN_WRITES=true`
@@ -205,6 +207,7 @@ The agent is also exposed over the [AG-UI protocol](https://docs.ag-ui.com) at
 
 | Endpoint | Method | Description |
 |---|---|---|
+| `/repos/mine` | GET | Repositories the visitor's own token can access (never the server's token) |
 | `/repos/inspect?repo=` | GET | Validate a slug or URL, load the board, report `mode`, `can_write`, rate limit and per-repo memories |
 | `/missions` | GET | Starter missions and the sample repository |
 | `/missions/start` | POST | `{repo, goal, mission_id?, user_id?, autonomy}` — SSE. Forced to `observe` without write access |

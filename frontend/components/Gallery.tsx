@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, Brain, CircleDot, Eye, Gauge, GitPullRequest, Github, Hand, Loader2, Rocket, Sparkles, Star, Zap } from "lucide-react";
 import { Inspection, Mission, getJSON } from "../lib/api";
+import RepoPicker from "./RepoPicker";
 import { recentRepos, rememberRepo } from "../lib/github";
 
 const ACCENT: Record<string, string> = {
@@ -26,7 +27,6 @@ export default function Gallery({ missions, sampleRepo, offlinePilot, token, aut
   autonomy: string; onAutonomy: (a: string) => void; userId: string | null;
   onStart: (repo: string, goal: string, mission: Mission | null) => void; busy: boolean;
 }) {
-  const [repoInput, setRepoInput] = useState("");
   const [repo, setRepo] = useState<Inspection | null>(null);
   const [inspecting, setInspecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +47,6 @@ export default function Gallery({ missions, sampleRepo, offlinePilot, token, aut
     try {
       const data = await getJSON<Inspection>(`/repos/inspect?repo=${encodeURIComponent(slug)}${userId ? `&user_id=${encodeURIComponent(userId)}` : ""}`);
       setRepo(data);
-      setRepoInput(data.repo.full_name);
       if (data.mode === "live") { rememberRepo(data.repo.full_name); setRecent(recentRepos()); }
     } catch (e: any) {
       setRepo(null);
@@ -68,7 +67,7 @@ export default function Gallery({ missions, sampleRepo, offlinePilot, token, aut
   return (
     <div className="mx-auto w-full max-w-6xl px-4 pb-16 pt-8 sm:pt-12">
       <section className="grid items-start gap-8 lg:grid-cols-[1.2fr_1fr]">
-        <div>
+        <div className="min-w-0">
           <span className="chip border-ember-200 bg-ember-50 text-ember-700"><Sparkles className="h-3 w-3" aria-hidden="true" />Human-in-the-loop maintainer agent</span>
           <h1 className="mt-3 font-display text-4xl font-semibold leading-[1.05] tracking-tight text-ink sm:text-5xl">
             Your backlog, triaged.<br /><span className="text-ember-600">Nothing posted without you.</span>
@@ -78,20 +77,11 @@ export default function Gallery({ missions, sampleRepo, offlinePilot, token, aut
             each with a risk score and a preview. Approve in bulk, edit before it posts, reject with a reason it learns from, rewind if you change your mind.
           </p>
 
-          <form className="mt-6 flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); if (repoInput.trim()) inspect(repoInput.trim()); }}>
-            <div className="relative flex-1">
-              <Github className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" aria-hidden="true" />
-              <input className="field h-12 pl-9 text-[15px]" value={repoInput} onChange={(e) => setRepoInput(e.target.value)}
-                     placeholder="owner/repository or a github.com URL" aria-label="Repository" autoComplete="off" spellCheck={false} />
-            </div>
-            <button type="submit" className="btn-primary h-12 shrink-0 px-5" disabled={inspecting || !repoInput.trim()}>
-              {inspecting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <ArrowRight className="h-4 w-4" aria-hidden="true" />} Load
-            </button>
-          </form>
+          <div className="mt-6"><RepoPicker token={token} current={repo?.repo.full_name ?? null} loading={inspecting} onPick={inspect} /></div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
             <button type="button" onClick={() => inspect(sampleRepo)} className="chip border-stone-200 bg-white text-stone-700 hover:border-ember-300 hover:text-ember-700">Try the sample repo</button>
-            {recent.map((r) => <button key={r} type="button" onClick={() => inspect(r)} className="chip border-stone-200 bg-white text-stone-700 hover:border-ember-300 hover:text-ember-700">{r}</button>)}
-            <span className="ml-1">Any public repo works read-only. <strong>Connect GitHub</strong> to act.</span>
+            {recent.map((r) => <button key={r} type="button" onClick={() => inspect(r)} title={r} className="chip max-w-full border-stone-200 bg-white text-stone-700 hover:border-ember-300 hover:text-ember-700"><span className="truncate">{r}</span></button>)}
+            <span className="ml-1">{token ? "Pick one of your repositories, or type any public repo." : <>Any public repo works read-only. <strong>Connect GitHub</strong> to list and act on yours.</>}</span>
           </div>
           {error && <p role="alert" className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
 
@@ -114,7 +104,7 @@ export default function Gallery({ missions, sampleRepo, offlinePilot, token, aut
           </div>
         </div>
 
-        <aside className="card bg-grid p-5">
+        <aside className="card min-w-0 bg-grid p-5">
           {!repo && inspecting ? (
             <div className="animate-pulse space-y-3" aria-label="Loading repository">
               <div className="h-5 w-2/3 rounded bg-stone-200" /><div className="h-3 w-full rounded bg-stone-100" />
