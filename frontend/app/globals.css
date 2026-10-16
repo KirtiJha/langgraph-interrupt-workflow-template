@@ -2,25 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Mission Control design tokens — warm paper, ink text, one confident accent. */
 @layer base {
+  :root {
+    --paper: 250 248 243;
+    --ink: 28 25 23;
+    --accent: 234 88 12; /* ember */
+    --accent-soft: 255 237 213;
+  }
+
   html {
     scroll-behavior: smooth;
   }
 
   body {
-    @apply bg-gray-50 text-gray-900;
+    @apply bg-paper text-ink antialiased;
+    font-feature-settings: "cv11", "ss01", "tnum";
   }
 
-  /* Keyboard users get a clear focus ring; mouse users don't see it. */
   button:focus-visible,
   a:focus-visible,
   input:focus-visible,
   textarea:focus-visible,
-  [role="radio"]:focus-visible {
-    @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-white;
+  select:focus-visible,
+  [role="radio"]:focus-visible,
+  [role="tab"]:focus-visible {
+    @apply outline-none ring-2 ring-ember-500 ring-offset-2 ring-offset-paper;
   }
 
-  /* Respect the OS "reduce motion" preference: no slide/fade/pulse/scale. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -34,82 +43,39 @@
 }
 
 @layer components {
-  .chat-message {
-    @apply animate-slide-up;
+  .card {
+    @apply rounded-2xl border border-stone-200/80 bg-white shadow-card;
   }
-
-  .interrupt-card {
-    @apply bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 shadow-soft;
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap;
   }
-
-  .progress-step {
-    @apply transition-all duration-300 ease-in-out;
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
   }
-
-  .progress-step.active {
-    @apply scale-105 shadow-soft;
+  .btn-primary {
+    @apply btn bg-ink text-paper hover:bg-stone-800;
   }
-
-  .message-bubble {
-    @apply rounded-xl px-4 py-3 max-w-3xl shadow-soft text-sm leading-relaxed;
+  .btn-accent {
+    @apply btn bg-ember-600 text-white hover:bg-ember-700 shadow-sm;
   }
-
-  .assistant-message {
-    @apply bg-white border border-gray-100;
+  .btn-ghost {
+    @apply btn bg-transparent text-stone-700 hover:bg-stone-100;
   }
-
-  .user-message {
-    @apply bg-gradient-to-r from-primary-500 to-primary-600 text-white;
+  .btn-outline {
+    @apply btn border border-stone-300 bg-white text-stone-800 hover:bg-stone-50;
   }
-
-  .system-message {
-    @apply bg-gradient-to-r from-orange-50 to-yellow-50 border border-orange-200 text-orange-900;
+  .field {
+    @apply w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm text-ink placeholder:text-stone-400 focus:border-ember-500 focus:outline-none focus:ring-2 focus:ring-ember-200;
   }
-
-  .option-button {
-    @apply p-3 text-left rounded-lg bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 transition-all duration-200 hover:shadow-soft hover:scale-[1.02];
+  .kbd {
+    @apply inline-flex h-5 min-w-5 items-center justify-center rounded border border-stone-300 bg-stone-50 px-1 font-mono text-[10px] font-semibold text-stone-500;
   }
-
-  .input-field {
-    @apply px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 shadow-soft text-sm;
-  }
-
-  .send-button {
-    @apply px-6 py-3 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-soft hover:shadow-soft-lg hover:scale-105 text-sm font-medium;
-  }
-
-  .compact-card {
-    @apply bg-white/70 backdrop-blur-sm rounded-xl shadow-soft border border-white/30 p-4;
-  }
-
-  .avatar-sm {
-    @apply w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 shadow-soft;
-  }
-
-  .avatar-md {
-    @apply w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-soft;
-  }
-
-  .progress-bar-compact {
-    @apply flex items-center justify-between p-4 bg-white/70 backdrop-blur-sm rounded-xl shadow-soft border border-white/30;
-  }
-
-  .choice-message {
-    @apply bg-gradient-to-r from-purple-50/70 to-indigo-50/70 border border-purple-200/60 rounded-full px-3 py-1.5 max-w-fit shadow-sm backdrop-blur-sm text-xs;
-  }
-
-  .choice-badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100/80 text-purple-700 border border-purple-200/60;
-  }
-
-  .choice-compact {
-    @apply flex items-center space-x-2 px-3 py-1.5 bg-purple-50 border border-purple-200 rounded-full max-w-fit;
-    @apply shadow-sm hover:shadow-md transition-all duration-200;
+  .ghost {
+    @apply border-dashed border-ember-400 bg-ember-50/60;
   }
 }
 
 @layer utilities {
-  /* Horizontal scroll without a visible scrollbar (status strip on mobile). */
   .scrollbar-none {
     -ms-overflow-style: none;
     scrollbar-width: none;
@@ -117,98 +83,11 @@
   .scrollbar-none::-webkit-scrollbar {
     display: none;
   }
-
-  .text-gradient {
-    @apply bg-gradient-to-r from-primary-600 to-secondary-600 bg-clip-text text-transparent;
+  .bg-grid {
+    background-image: radial-gradient(rgb(28 25 23 / 0.06) 1px, transparent 1px);
+    background-size: 22px 22px;
   }
-
-  .bg-mesh {
-    background-image: radial-gradient(
-        circle at 25% 25%,
-        rgba(59, 130, 246, 0.1) 0%,
-        transparent 50%
-      ),
-      radial-gradient(
-        circle at 75% 75%,
-        rgba(217, 70, 239, 0.1) 0%,
-        transparent 50%
-      );
-  }
-
-  .border-3 {
-    border-width: 3px;
-  }
-
-  .prose-sm {
-    font-size: 0.875rem;
-    line-height: 1.5;
-  }
-
-  .prose-sm p {
-    margin-top: 0.75rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .prose-sm h1 {
-    font-size: 1.25rem;
-    line-height: 1.4;
-    margin-top: 1rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .prose-sm h2 {
-    font-size: 1.125rem;
-    line-height: 1.4;
-    margin-top: 0.875rem;
-    margin-bottom: 0.625rem;
-  }
-
-  .prose-sm h3 {
-    font-size: 1rem;
-    line-height: 1.4;
-    margin-top: 0.75rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .prose-sm ul,
-  .prose-sm ol {
-    margin-top: 0.75rem;
-    margin-bottom: 0.75rem;
-    padding-left: 1rem;
-  }
-
-  .prose-sm li {
-    margin-top: 0.25rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .prose-sm blockquote {
-    margin-top: 0.75rem;
-    margin-bottom: 0.75rem;
-    padding-left: 0.75rem;
-    border-left-width: 3px;
-  }
-
-  .prose-sm pre {
-    margin-top: 0.75rem;
-    margin-bottom: 0.75rem;
-    padding: 0.75rem;
-    font-size: 0.8125rem;
-  }
-
-  .prose-sm code {
-    font-size: 0.8125rem;
-    padding: 0.125rem 0.25rem;
-  }
-
-  .prose-sm table {
-    font-size: 0.8125rem;
-    margin-top: 0.75rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .prose-sm th,
-  .prose-sm td {
-    padding: 0.5rem 0.75rem;
+  .tabular {
+    font-variant-numeric: tabular-nums;
   }
 }

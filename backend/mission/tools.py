@@ -140,7 +140,7 @@ async def remember(runtime: ToolRuntime, note: str) -> str:
 
     user_id = (runtime.state or {}).get("user_id")
     await save_user_memory(runtime.store, user_id, note)
-    _emit(f"🧠 Remembered: {note}", kind="memory")
+    _emit(f"Remembered for next time: {note}", kind="memory")
     return f"Remembered: {note}"
 
 

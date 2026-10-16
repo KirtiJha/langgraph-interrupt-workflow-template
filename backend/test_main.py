@@ -145,6 +145,7 @@ def test_edit_changes_what_runs(client):
     state = _approve_all(client, thread, _state(events))
     charge = next(t for t in state["world"]["wallet"]["transactions"] if t["payee"] == "United + Lufthansa")
     assert charge["amount"] == -500
+    assert state["report"]["spent"] == 500 + 495  # the pilot reads what *ran*, not what it asked
 
 
 def test_partial_decisions_and_respond(client):

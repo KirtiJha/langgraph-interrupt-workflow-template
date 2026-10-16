@@ -54,6 +54,16 @@ class Ctx:
                     continue
                 text = str(m.content)
                 call["result"] = text
+                # A reviewer may have edited the call: what *ran* is in the notice.
+                marker = "Executed instead: "
+                if text.startswith("Note: a human reviewer") and marker in text:
+                    try:
+                        after = text[text.index(marker) + len(marker):]
+                        name, _, rest = after.partition(" with arguments ")
+                        call["args"] = json.JSONDecoder().raw_decode(rest)[0]
+                        call["tool"] = name.strip()
+                    except (ValueError, IndexError):
+                        pass
                 call["rejected"] = text.startswith("User rejected")
                 acting = call["tool"] in ("send_email", "archive_emails", "add_calendar_event", "pay", "book",
                                           "cancel_subscription", "finish_mission")
@@ -185,9 +195,12 @@ def birthday(c: Ctx) -> Step | str:
         open_items = [x for x, ok in (("Invite the family", not c.ok("send_email")),
                                       ("Order a cake", not c.ok("pay", payee="Golden Crumb"))) if ok]
         total = 12 * next((r["price_per_person"] for r in C.RESTAURANTS if r["name"] == venue.get("vendor")), 45)
-        return (f"All set. Estimated dinner cost ${total:,} — comfortably under $600.",
+        budget_line = (f"about ${total:,} for 12, under your $600" if total <= 600
+                       else f"about ${total:,} for 12 — ${total - 600} over your $600; the deposit is refundable if you'd rather switch")
+        return (f"All set. Dinner will run {budget_line}.",
                 [("finish_mission", {"summary": f"Mom's 60th is on {sat.strftime('%A, %B %-d')} at "
-                                                f"{venue.get('vendor', choice)} — quiet, vegetarian, under budget.",
+                                                f"{venue.get('vendor', choice)} — quiet, vegetarian, "
+                                                f"{'under budget' if total <= 600 else f'about ${total - 600} over budget'}.",
                                      "done": done, "open_items": open_items, "spent": c.spent()})])
     return "Mission complete — I'll be here when the RSVPs come in."
 

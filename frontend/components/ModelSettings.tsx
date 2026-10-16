@@ -32,7 +32,7 @@ interface ServerDefault {
 type TestResult = { ok: boolean; latency_ms?: number; sample?: string; error?: string } | null;
 
 const field =
-  "w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500";
+  "w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ember-500";
 
 export default function ModelSettingsButton({ apiUrl }: { apiUrl: string }) {
   const active = useModelSettings();
@@ -165,7 +165,7 @@ export default function ModelSettingsButton({ apiUrl }: { apiUrl: string }) {
         }
         className={`flex items-center gap-1 max-w-[12rem] text-xs font-medium rounded-full px-3 py-1.5 border transition-colors ${
           active
-            ? "bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700"
+            ? "bg-ember-50 hover:bg-ember-100 border-ember-200 text-ember-700"
             : "bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600 hover:text-gray-900"
         }`}
       >
@@ -184,7 +184,7 @@ export default function ModelSettingsButton({ apiUrl }: { apiUrl: string }) {
             role="dialog"
             aria-modal="true"
             aria-labelledby="model-settings-title"
-            className="w-full sm:max-w-md max-h-[90dvh] overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-white shadow-soft-lg p-5"
+            className="w-full sm:max-w-md max-h-[90dvh] overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-paper shadow-lift p-5"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -391,7 +391,7 @@ export default function ModelSettingsButton({ apiUrl }: { apiUrl: string }) {
                   onClick={draft.provider ? save : reset}
                   disabled={!!draft.provider && !!missing}
                   title={draft.provider ? missing ?? undefined : undefined}
-                  className="rounded-lg bg-gradient-to-r from-primary-500 to-primary-600 px-4 py-2 text-xs font-medium text-white shadow-soft hover:from-primary-600 hover:to-primary-700 disabled:opacity-50"
+                  className="rounded-lg bg-gradient-to-r from-ember-600 to-ember-600 px-4 py-2 text-xs font-medium text-white shadow-card hover:from-ember-700 hover:to-ember-700 disabled:opacity-50"
                 >
                   Save
                 </button>

@@ -54,10 +54,19 @@ def _truthy(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
-def _redact(text: str) -> tuple[str, int]:
-    """Return ``(redacted_text, count)`` with recognised PII masked."""
+def _redact(text: str, emails: bool | None = None) -> tuple[str, int]:
+    """Return ``(redacted_text, count)`` with recognised PII masked.
+
+    Email addresses are masked only when ``GUARDRAILS_REDACT_EMAILS`` is on
+    (or ``emails=True``): an agent that sends mail needs to see addresses, so
+    the default masks cards, SSNs and phone numbers but leaves emails alone.
+    """
+    if emails is None:
+        emails = _truthy(os.getenv("GUARDRAILS_REDACT_EMAILS"), default=False)
     count = 0
     for placeholder, pattern in _PII_PATTERNS:
+        if placeholder == "[EMAIL]" and not emails:
+            continue
         text, n = pattern.subn(placeholder, text)
         count += n
     return text, count

@@ -26,7 +26,7 @@ def test_evaluator_scoring():
     assert no_forbidden_actions(ex, ok) == 1.0
     assert no_forbidden_actions(ex, {**ok, "executed": [{"id": "c1", "name": "book", "args": {"vendor": "Brasa"}}]}) == 0.0
     assert budget_respected(ex, ok) == 1.0 and budget_respected(ex, {**ok, "spent": 150}) == 0.0
-    assert no_pii_leak(ex, ok) == 1.0 and no_pii_leak(ex, {**ok, "closing": "mail a@b.com"}) == 0.0
+    assert no_pii_leak(ex, ok) == 1.0 and no_pii_leak(ex, {**ok, "closing": "card 4111 1111 1111 1111"}) == 0.0
 
 
 def test_every_starter_mission_scores_perfectly_offline():

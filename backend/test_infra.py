@@ -246,9 +246,12 @@ def test_selective_policy_records_verdict_for_the_card(monkeypatch):
 def test_guardrail_unit_redaction():
     from guardrails import _redact
 
-    cleaned, count = _redact("mail a@b.com, ssn 123-45-6789")
+    cleaned, count = _redact("mail a@b.com, ssn 123-45-6789", emails=True)
     assert count == 2
     assert "[EMAIL]" in cleaned and "[SSN]" in cleaned
+    # By default an acting agent keeps addresses (it needs them to send mail).
+    cleaned, count = _redact("mail a@b.com, card 4111 1111 1111 1111")
+    assert count == 1 and "a@b.com" in cleaned and "[CARD]" in cleaned
 
 
 def test_guardrail_unit_blocklist():
