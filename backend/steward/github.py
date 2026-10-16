@@ -295,6 +295,47 @@ class GitHub:
 
 
 # --- Fixture backend -------------------------------------------------------------
+def list_user_repos(limit: int = 300) -> list[dict]:
+    """Repositories the *visitor's* token can see, most recently pushed first.
+
+    Uses only the visitor's own token (never the server's), so one visitor can
+    never browse the deployment owner's repositories. Works with classic and
+    fine-grained tokens (the latter return just the repos they were granted).
+    """
+    token = user_token()
+    if not token:
+        raise GitHubError("Connect a GitHub token to list your repositories.")
+    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+               "User-Agent": "repo-steward", "Authorization": f"Bearer {token}"}
+    repos: list[dict] = []
+    url: Optional[str] = f"{API}/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member"
+    try:
+        with httpx.Client(timeout=20) as client:
+            while url and len(repos) < limit:
+                res = client.get(url, headers=headers)
+                if res.status_code == 401:
+                    raise GitHubError("GitHub rejected the token — it may be expired or revoked.")
+                if res.status_code == 403:
+                    msg = (res.json().get("message") if res.headers.get("content-type", "").startswith("application/json") else "") or ""
+                    raise GitHubError(scrub(f"GitHub won't list repositories for this token ({msg[:160]}). You can still type owner/name."))
+                if res.status_code >= 400:
+                    raise GitHubError(scrub(f"GitHub error {res.status_code}: {res.text[:200]}"))
+                for r in res.json():
+                    perms = r.get("permissions") or {}
+                    repos.append({
+                        "full_name": r["full_name"], "description": r.get("description") or "",
+                        "private": bool(r.get("private")), "fork": bool(r.get("fork")), "archived": bool(r.get("archived")),
+                        "open_issues": r.get("open_issues_count", 0), "stars": r.get("stargazers_count", 0),
+                        "pushed_at": _iso(r.get("pushed_at")), "language": r.get("language"),
+                        "can_write": bool(perms.get("push") or perms.get("maintain") or perms.get("admin")),
+                        "has_issues": r.get("has_issues", True),
+                    })
+                url = res.links.get("next", {}).get("url")
+    except httpx.HTTPError as exc:
+        raise GitHubError(scrub(f"GitHub unreachable: {exc}")) from None
+    return repos[:limit]
+
+
 class FixtureGitHub:
     """Offline backend over a JSON snapshot: reads from it, writes are no-ops.
 

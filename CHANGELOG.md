@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Repository picker:** with a GitHub token connected, the repo box lists every
+  repository the token can access (`GET /repos/mine`, visitor token only) with
+  search, sort (recent / most issues / A–Z), a "can act" filter, private and
+  fork badges, open-issue counts and keyboard navigation. Typing owner/name still
+  works for any public repo.
 - **UI/UX pass for every screen size.** Tablet layout (feed + board); a
   collapsible phone decision sheet with one card at a time; no horizontal
   overflow on any size (it overflowed by 478px on phones).

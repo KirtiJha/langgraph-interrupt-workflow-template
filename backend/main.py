@@ -9,6 +9,7 @@ survives restarts (Postgres) and can be rewound and forked at decision points.
 Endpoints:
 
 - ``GET  /repos/inspect?repo=owner/name``     validate a repo and preview its board
+- ``GET  /repos/mine``                        repositories the visitor's token can access
 - ``GET  /missions``                          starter missions + the sample repo
 - ``POST /missions/start``                    start a mission on a repo (SSE)
 - ``POST /missions/{id}/decide``              answer approvals / questions and resume (SSE)
@@ -59,7 +60,7 @@ from middleware_pack import active_middleware_names
 from steward import agent as M
 from steward import catalog, policy
 from steward.fixture import SAMPLE_REPO_NAME
-from steward.github import GitHubError, GitHubTokenMiddleware, backend_for, parse_repo, read_token, write_token
+from steward.github import GitHubError, GitHubTokenMiddleware, backend_for, list_user_repos, parse_repo, read_token, write_token
 from steward.github import scrub as scrub_token
 
 load_dotenv()
@@ -253,6 +254,13 @@ async def repo_inspect(repo: str, request: Request, user_id: Optional[str] = Non
         "token": "user" if request.headers.get("x-github-token") else ("server" if read_token() else None),
         "memories": [m[2:] for m in memory.splitlines() if m.startswith("- ")],
     }
+
+
+@app.get("/repos/mine")
+async def repos_mine():
+    """Repositories the visitor's own GitHub token can access (for the picker)."""
+    repos = await asyncio.to_thread(list_user_repos)
+    return {"repos": repos, "count": len(repos)}
 
 
 @app.get("/missions")

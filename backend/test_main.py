@@ -256,6 +256,41 @@ def test_github_token_is_scoped_and_scrubbed(client, monkeypatch):
     assert gh.parse_repo("acme/pixelforge") == "acme/pixelforge" and gh.parse_repo("nope") is None
 
 
+def test_repos_mine_needs_the_visitors_token(client, monkeypatch):
+    # The server's own token must never be used to list repos for a visitor.
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_server_owned_token_1234")
+    res = client.get("/repos/mine")
+    assert res.status_code == 400 and "Connect a GitHub token" in res.json()["detail"]
+
+
+def test_repos_mine_lists_and_paginates(client, monkeypatch):
+    import httpx
+
+    pages = {
+        "https://api.github.com/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member":
+            ([{"full_name": "me/a", "private": True, "open_issues_count": 3, "permissions": {"push": True}, "pushed_at": "2026-10-01T00:00:00Z"}],
+             '<https://api.github.com/page2>; rel="next"'),
+        "https://api.github.com/page2": ([{"full_name": "org/b", "permissions": {"pull": True}}], None),
+    }
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get(self, url, headers):
+            seen["auth"] = headers["Authorization"]
+            body, link = pages[url]
+            return httpx.Response(200, json=body, headers={"link": link} if link else {}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("steward.github.httpx.Client", FakeClient)
+    data = client.get("/repos/mine", headers={"X-GitHub-Token": "github_pat_visitor_9876"}).json()
+    assert [r["full_name"] for r in data["repos"]] == ["me/a", "org/b"]
+    assert data["repos"][0]["can_write"] is True and data["repos"][0]["private"] is True
+    assert data["repos"][1]["can_write"] is False
+    assert seen["auth"] == "Bearer github_pat_visitor_9876"
+
+
 @pytest.mark.skipif(not os.getenv("TEST_GITHUB_LIVE"), reason="set TEST_GITHUB_LIVE=1 to hit api.github.com")
 def test_live_public_repo_is_read_only_without_a_token(client):
     board = client.get("/repos/inspect", params={"repo": "KirtiJha/langgraph-interrupt-workflow-template"}).json()
