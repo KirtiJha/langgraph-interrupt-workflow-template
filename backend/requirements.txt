@@ -32,6 +32,7 @@ langchain-openai>=1.2,<2
 # --- Optional tools ---
 # langchain-tavily>=0.2         # live web search (set TAVILY_API_KEY)
 # langchain-mcp-adapters>=0.1   # load tools from MCP servers (set MCP_SERVERS)
+# langgraph-jev>=0.1            # Jev decision-model risk gate (TYPESAFE_API_KEY, HITL_RISK_CLASSIFIER=jev)
 
 # --- Evaluation (backend/evals) ---
 # Pulled in transitively by langchain; pinned here for the eval harness.

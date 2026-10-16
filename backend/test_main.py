@@ -403,6 +403,82 @@ def test_approval_policy_selective_pauses_only_on_risky_args(monkeypatch):
     assert when(benign) is False
 
 
+# --- Risk classifiers (pattern default; Jev decision model, no key needed) ----
+class _StubJev:
+    """Stands in for langgraph_jev.JevRunnable: returns a canned JevResult."""
+
+    def __init__(self, value: bool, confidence: float):
+        self.value, self.confidence = value, confidence
+        self.calls: list[dict] = []
+
+    def invoke(self, state, config=None, **kw):
+        # langgraph-jev is an optional dependency: skip these tests without it.
+        lj = pytest.importorskip("langgraph_jev")
+
+        self.calls.append(state)
+        return lj.JevResult(
+            model="jev",
+            decisions={
+                "risky": lj.JevDecision(
+                    field="risky", type="boolean", value=self.value, confidence=self.confidence
+                )
+            },
+            requires_review=False,
+        )
+
+
+def test_jev_classifier_pauses_when_risky_or_unsure():
+    import approval_policy as ap
+
+    risky = ap.JevRiskClassifier(runnable=_StubJev(True, 0.91), threshold=0.75)
+    v = risky.classify("web_search", {"query": "wire $5000"})
+    assert v.risky is True and v.source == "jev" and v.confidence == 0.91
+
+    unsure = ap.JevRiskClassifier(runnable=_StubJev(False, 0.4), threshold=0.75)
+    v = unsure.classify("web_search", {"query": "hmm"})
+    assert v.risky is True and "low confidence" in v.reason  # uncertainty → human
+
+    safe = ap.JevRiskClassifier(runnable=_StubJev(False, 0.95), threshold=0.75)
+    v = safe.classify("web_search", {"query": "tide tables"})
+    assert v.risky is False and v.reason == "looks safe"
+
+
+def test_jev_classifier_falls_back_to_patterns_on_api_error():
+    import approval_policy as ap
+
+    class Boom:
+        def invoke(self, *a, **k):
+            raise RuntimeError("503 from the gate")
+
+    clf = ap.JevRiskClassifier(runnable=Boom())
+    v = clf.classify("web_search", {"query": "reset my password"})
+    assert v.risky is True and v.source == "jev→patterns"  # regex still caught it
+
+
+def test_jev_mode_without_key_degrades_to_patterns(monkeypatch):
+    import approval_policy as ap
+
+    monkeypatch.setenv("HITL_RISK_CLASSIFIER", "jev")
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    assert ap.get_risk_classifier().name == "patterns"  # no crash, no key needed
+
+
+def test_selective_policy_records_verdict_for_the_card(monkeypatch):
+    from types import SimpleNamespace
+
+    import approval_policy as ap
+
+    monkeypatch.setenv("HITL_POLICY", "selective")
+    stub = _StubJev(True, 0.88)
+    rules = ap.build_interrupt_on(["web_search"], classifier=ap.JevRiskClassifier(runnable=stub))
+    when = rules["web_search"]["when"]
+    req = SimpleNamespace(tool_call={"id": "call_42", "name": "web_search", "args": {"query": "x"}})
+    assert when(req) is True
+    assert stub.calls[0] == {"tool": "web_search", "arguments": {"query": "x"}}
+    verdict = ap.verdict_for("call_42")
+    assert verdict and verdict["source"] == "jev" and verdict["confidence"] == 0.88
+
+
 def test_deep_agent_restores_todos_and_gates_shell():
     """deepagents 0.7 dropped write_todos and added shell/delete tools."""
     from langgraph.checkpoint.memory import MemorySaver
