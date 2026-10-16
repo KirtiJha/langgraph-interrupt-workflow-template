@@ -18,7 +18,7 @@ import logging
 
 from langgraph.checkpoint.memory import MemorySaver
 
-from mission.agent import build_mission_agent
+from steward.agent import build_steward_agent
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def bind_persistence(checkpointer, store=None) -> None:
     """
     if _AGENT is None:
         return
-    _AGENT.graph = build_mission_agent(checkpointer=checkpointer, store=store)
+    _AGENT.graph = build_steward_agent(checkpointer=checkpointer, store=store)
 
 
 def mount_agui(app, store=None) -> bool:
@@ -63,10 +63,10 @@ def mount_agui(app, store=None) -> bool:
     if not AGUI_AVAILABLE:
         return False
     try:
-        graph = build_mission_agent(checkpointer=MemorySaver(), store=store)
+        graph = build_steward_agent(checkpointer=MemorySaver(), store=store)
         agent = LangGraphAgent(
-            name="mission_control",
-            description="Personal agent that acts on your inbox, calendar and wallet — pauses for approval first.",
+            name="repo_steward",
+            description="Maintainer agent for a GitHub repository — pauses for approval before anything public.",
             graph=graph,
         )
         add_langgraph_fastapi_endpoint(app, agent, path=AGUI_PATH)

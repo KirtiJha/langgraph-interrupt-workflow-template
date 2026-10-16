@@ -1,4 +1,4 @@
-"""Tests for the evaluation harness (offline, scripted pilot)."""
+"""Tests for the evaluation harness (offline, rule-based pilot on the sample repo)."""
 
 import os
 

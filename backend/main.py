@@ -1,26 +1,28 @@
-"""Mission Control — FastAPI backend.
+"""Repo Steward — FastAPI backend.
 
-A personal agent that gets real-life jobs done inside a simulated world (inbox,
-calendar, wallet, bookings…) and **asks before anything that matters**. Every
-mission is a LangGraph thread: it streams its work over SSE, pauses on
-per-call human-in-the-loop interrupts, survives restarts (Postgres), and can be
-rewound and forked at any decision point.
+A maintainer's agent for GitHub repositories: it triages issues, reviews pull
+requests, sweeps stale threads, drafts release notes and welcomes contributors,
+and **asks before anything public happens**. Every mission is a LangGraph
+thread that streams over SSE, pauses on per-call human-in-the-loop interrupts,
+survives restarts (Postgres) and can be rewound and forked at decision points.
 
 Endpoints:
 
-- ``GET  /missions``                        starter missions + what we remember about you
-- ``POST /missions/start``                  start a mission (SSE)
-- ``POST /missions/{id}/decide``            answer approvals / questions and resume (SSE)
-- ``POST /missions/{id}/continue``          a follow-up goal on the same thread (SSE)
-- ``POST /missions/{id}/fork``              branch from a past decision point (SSE)
-- ``POST /missions/{id}/cancel``            graceful stop (progress is saved)
-- ``GET  /missions/{id}``                   current state (world, pending, report)
-- ``GET  /missions/{id}/timeline``          the feed so far (for reloads)
-- ``GET  /missions/{id}/history``           decision points for time travel
+- ``GET  /repos/inspect?repo=owner/name``     validate a repo and preview its board
+- ``GET  /missions``                          starter missions + the sample repo
+- ``POST /missions/start``                    start a mission on a repo (SSE)
+- ``POST /missions/{id}/decide``              answer approvals / questions and resume (SSE)
+- ``POST /missions/{id}/continue``            a follow-up goal on the same thread (SSE)
+- ``POST /missions/{id}/fork``                branch from a past decision point (SSE)
+- ``POST /missions/{id}/cancel``              graceful stop (progress is saved)
+- ``GET  /missions/{id}``                     current state (board, pending, report)
+- ``GET  /missions/{id}/timeline``            the feed so far (for reloads)
+- ``GET  /missions/{id}/history``             decision points for time travel
 - ``GET  /capabilities``, ``/model/*``, ``/health``, ``/agui``
 
-Set ``LLM_MODEL`` + a provider key (or pick a model in the UI) for open-ended
-goals; the starter missions run offline on the scripted pilot.
+A visitor's GitHub token arrives as ``X-GitHub-Token`` and is scoped to the
+request, like the ``X-LLM-*`` model settings. Without one, public repos are
+read-only and actions are recorded as proposals.
 """
 
 from __future__ import annotations
@@ -54,9 +56,11 @@ from llm import get_llm, model_status, requests_per_second, text_of, using_mock_
 from mcp_tools import load_mcp_tools
 from memory import build_store, index_config, load_user_memory, save_user_memory
 from middleware_pack import active_middleware_names
-from mission import agent as M
-from mission import catalog, policy
-from mission.world import seed_world
+from steward import agent as M
+from steward import catalog, policy
+from steward.fixture import SAMPLE_REPO_NAME
+from steward.github import GitHubError, GitHubTokenMiddleware, backend_for, parse_repo, read_token, write_token
+from steward.github import scrub as scrub_token
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -80,6 +84,7 @@ def _capabilities(store, mcp_tools) -> dict:
         "graceful_cancel": run_control.CANCEL_SUPPORTED,
         "hitl": {**approval_policy.describe(), **policy.describe()},
         "offline_pilot": using_mock_llm(),
+        "github": {"server_token": read_token() is not None, "server_token_writes": write_token() is not None},
     }
 
 
@@ -101,12 +106,12 @@ async def lifespan(app: FastAPI):
             saver, store = MemorySaver(), build_store()
         app.state.store = store
         app.state.capabilities = _capabilities(store, mcp_tools)
-        app.state.graph = M.build_mission_agent(checkpointer=saver, store=store, extra_tools=mcp_tools)
+        app.state.graph = M.build_steward_agent(checkpointer=saver, store=store, extra_tools=mcp_tools)
         agui_bind_persistence(saver, store)
         yield
 
 
-app = FastAPI(title="Mission Control", lifespan=lifespan)
+app = FastAPI(title="Repo Steward", lifespan=lifespan)
 mount_agui(app)
 app.add_middleware(
     CORSMiddleware,
@@ -115,8 +120,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# Model settings chosen in the UI (X-LLM-* headers), scoped to each request.
+# Model settings (X-LLM-*) and the GitHub token (X-GitHub-Token) chosen in the
+# UI are scoped to each request and never stored.
 app.add_middleware(ClientModelConfigMiddleware)
+app.add_middleware(GitHubTokenMiddleware)
+
+
+@app.exception_handler(GitHubError)
+async def _github_error(_request: Request, exc: GitHubError):
+    return JSONResponse(status_code=400, content={"detail": f"GitHub: {scrub_token(str(exc))}"})
 
 
 @app.exception_handler(ClientModelConfigError)
@@ -126,11 +138,11 @@ async def _client_model_error(_request: Request, exc: ClientModelConfigError):
 
 # --- Request models ---------------------------------------------------------
 class MissionStart(BaseModel):
+    repo: str = SAMPLE_REPO_NAME  # owner/name or a github.com URL
     goal: str
     mission_id: Optional[str] = None
     user_id: Optional[str] = None
-    autonomy: str = Field("careful", pattern="^(careful|balanced|autopilot)$")
-    ask_above: float = policy.DEFAULT_ASK_ABOVE
+    autonomy: str = Field("careful", pattern="^(observe|careful|balanced|autopilot)$")
 
 
 class Decisions(BaseModel):
@@ -176,13 +188,18 @@ async def _require_thread(graph, thread_id: str):
     raise HTTPException(status_code=404, detail=f"Mission '{thread_id}' not found.{hint}")
 
 
-async def _with_memory(request: Request, user_id: Optional[str], stream, mission_title: str):
+def _memory_key(user_id: Optional[str], repo: Optional[str]) -> Optional[str]:
+    """Memories are per visitor *and* per repository."""
+    return f"{user_id}@{repo}" if user_id and repo else None
+
+
+async def _with_memory(request: Request, memory_key: Optional[str], stream, mission_title: str):
     """Pass events through; when the report lands, remember the outcome."""
     async for event in stream:
-        if event.get("type") == "report" and user_id:
+        if event.get("type") == "report" and memory_key:
             summary = (event["report"] or {}).get("summary", "")
             if summary:
-                await save_user_memory(request.app.state.store, user_id, f"{mission_title}: {summary}")
+                await save_user_memory(request.app.state.store, memory_key, f"{mission_title}: {summary}")
         yield event
 
 
@@ -222,16 +239,26 @@ async def model_test():
 
 
 # --- Missions ---------------------------------------------------------------
-@app.get("/missions")
-async def missions(request: Request, user_id: Optional[str] = None):
-    """The gallery: starter missions, a preview of the world, and your memories."""
-    memory = await load_user_memory(request.app.state.store, user_id, limit=8) if user_id else ""
+@app.get("/repos/inspect")
+async def repo_inspect(repo: str, request: Request, user_id: Optional[str] = None):
+    """Validate a repo slug/URL, load its board, and say what the visitor can do."""
+    slug = parse_repo(repo)
+    if not slug:
+        raise HTTPException(status_code=400, detail="Enter a repository as owner/name or a github.com URL.")
+    board = await asyncio.to_thread(backend_for(slug).load_board)
+    memory = await load_user_memory(request.app.state.store, _memory_key(user_id, slug), limit=8)
     return {
-        "missions": catalog.MISSIONS,
-        "world": seed_world(),
+        "repo": board["repo"], "labels": board["labels"], "issues": board["issues"], "pulls": board["pulls"],
+        "mode": board["mode"], "can_write": board["can_write"], "rate": board.get("rate", {}),
+        "token": "user" if request.headers.get("x-github-token") else ("server" if read_token() else None),
         "memories": [m[2:] for m in memory.splitlines() if m.startswith("- ")],
-        "offline_pilot": using_mock_llm(),
     }
+
+
+@app.get("/missions")
+async def missions():
+    """The gallery: starter missions and the sample repository."""
+    return {"missions": catalog.MISSIONS, "sample_repo": SAMPLE_REPO_NAME, "offline_pilot": using_mock_llm()}
 
 
 @app.post("/missions/start")
@@ -241,14 +268,23 @@ async def mission_start(data: MissionStart, request: Request):
     goal = data.goal.strip()
     if not goal:
         raise HTTPException(status_code=400, detail="Tell me what to do.")
+    slug = parse_repo(data.repo)
+    if not slug:
+        raise HTTPException(status_code=400, detail="Enter a repository as owner/name or a github.com URL.")
+    board = await asyncio.to_thread(backend_for(slug).load_board)
+    autonomy = data.autonomy
+    if board["mode"] == "live" and not board["can_write"]:
+        autonomy = "observe"  # nothing can execute without a write token
     mission_id = data.mission_id or catalog.mission_for_goal(goal)
     title = catalog.MISSIONS_BY_ID.get(mission_id or "", {}).get("title") or goal[:60]
-    memory = await load_user_memory(request.app.state.store, data.user_id, query=goal)
-    inputs = M.start_input(goal, mission_id, data.autonomy, data.ask_above, memory, user_id=data.user_id)
+    key = _memory_key(data.user_id, slug)
+    memory = await load_user_memory(request.app.state.store, key, query=goal)
+    inputs = M.start_input(goal, mission_id, board, autonomy, memory, user_id=key)
 
     async def gen():
-        yield {"type": "thread", "thread_id": thread_id, "mission_id": mission_id, "title": title}
-        async for event in _with_memory(request, data.user_id, M.stream_mission(graph, thread_id, inputs), title):
+        yield {"type": "thread", "thread_id": thread_id, "mission_id": mission_id, "title": title, "repo": slug,
+               "mode": board["mode"], "can_write": board["can_write"], "autonomy": autonomy}
+        async for event in _with_memory(request, key, M.stream_mission(graph, thread_id, inputs), title):
             yield event
 
     return _sse(gen())
@@ -267,7 +303,7 @@ async def mission_decide(thread_id: str, data: Decisions, request: Request):
     values = state.values or {}
     title = catalog.MISSIONS_BY_ID.get(values.get("mission_id") or "", {}).get("title") or (values.get("goal") or "")[:60]
     stream = M.stream_mission(graph, thread_id, M.resume_command(data.decisions))
-    return _sse(_with_memory(request, values.get("user_id"), stream, title))
+    return _sse(_with_memory(request, values.get("user_id"), stream, title))  # user_id is already the memory key
 
 
 @app.post("/missions/{thread_id}/continue")

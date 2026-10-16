@@ -1,17 +1,12 @@
-"""The mission agent: ``create_agent`` + a simulated world in state + HITL.
+"""The Repo Steward agent: ``create_agent`` + the repo board in state + HITL.
 
-What's wired in, outermost first:
+Middleware, outermost first: the browser-chosen model, the offline pilot (when
+the model is the mock), guardrails, the power-pack, and
+``HumanInTheLoopMiddleware`` with the per-call policy from :mod:`steward.policy`.
 
-1. ``ClientModelMiddleware`` — the model chosen in the browser, per request.
-2. ``PilotMiddleware`` — when the model is the offline mock, fly the scripted
-   :class:`MissionPilot` instead so the demo works with no key.
-3. ``GuardrailMiddleware`` — PII redaction / blocklist before the model.
-4. The power-pack (summarization, call limits, retries) from ``middleware_pack``.
-5. ``HumanInTheLoopMiddleware`` with the per-call policy from :mod:`mission.policy`.
-
-The agent's state carries ``world`` (reduced by :func:`world_reducer`), the
-``autonomy`` setting, and the final ``report`` — all checkpointed, so a thread
-can be paused for days, forked, or rewound.
+State carries ``world`` (the board, reduced by :func:`world_reducer`), the
+``autonomy`` level and the final ``report`` — all checkpointed, so a mission
+can be paused for days, resumed on another instance, forked or rewound.
 """
 
 from __future__ import annotations
@@ -31,38 +26,39 @@ from client_model import ClientModelMiddleware, scrub
 from guardrails import GuardrailMiddleware
 from llm import MockChatModel, get_llm, text_of
 from middleware_pack import build_middleware_pack
-from mission import policy
-from mission.pilot import MissionPilot
-from mission.tools import ALL_TOOLS
-from mission.world import seed_world, world_reducer
+from steward import policy
+from steward.pilot import StewardPilot
+from steward.tools import ALL_TOOLS
+from steward.world import world_reducer
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are Mission Control: a personal agent that gets real-life jobs done for the user \
-(Alex) inside their world — inbox, calendar, wallet, contacts, subscriptions and bookings.
+SYSTEM_PROMPT = """You are Repo Steward: a maintainer's agent for a GitHub repository. You triage issues, review \
+pull requests, sweep stale threads, draft release notes and welcome contributors — and you ask before anything \
+public happens.
 
 How to work:
-- First read what you need (inbox, calendar, wallet, contacts). Call several reading tools at once.
-- Compare options before acting: search tools return several candidates with prices and refund terms. \
-Prefer refundable, well-rated, on-budget choices and say why in one sentence.
-- Act with the acting tools (book, pay, send_email, add_calendar_event, archive_emails, cancel_subscription). \
-Some actions pause for the user's approval; they may approve, edit the arguments, reject with a reason, or \
-answer instead. If an action is rejected, choose the next-best alternative or move on — never retry the same call.
-- Use ask_user only for a choice you genuinely can't make from their data (e.g. which of two venues).
-- Keep every message to one or two short sentences before your tool calls. No markdown headers.
-- When the goal is done (or blocked), call finish_mission exactly once with a summary, what was done, \
-what's still open, and the total spent. Then reply with one closing sentence.
-- Respect budgets and the user's remembered preferences."""
+- Start by reading what you need: list_issues / list_pulls (the board is already loaded), read_issue for threads, \
+read_file for README, CONTRIBUTING and code, find_similar for duplicates, read_pull for diffs. Call several at once.
+- Act with the acting tools: add_labels, comment, close_issue, retitle, create_issue, assign, request_reviewers, \
+merge_pull. Only use labels that exist on the board unless a new one is clearly needed. Comments are public: be \
+warm, specific and brief; cite files or lines when you answer from the code; never promise timelines.
+- Some actions pause for the maintainer's approval; they may approve, edit, reject with a reason, or reply. \
+If rejected, do not retry the same action — adjust or move on.
+- Use ask_user only for a decision you can't make from the repository.
+- Keep each message to one or two short sentences before your tool calls. No markdown headers.
+- When the goal is done (or blocked), call finish_mission exactly once, then reply with one closing sentence.
+- Respect what you remember about this repository's conventions."""
 
 
-class MissionState(AgentState):
+class StewardState(AgentState):
     world: NotRequired[Annotated[dict, world_reducer]]
-    autonomy: NotRequired[str]  # careful | balanced | autopilot
-    ask_above: NotRequired[float]
+    autonomy: NotRequired[str]  # observe | careful | balanced | autopilot
     report: NotRequired[dict]
     mission_id: NotRequired[Optional[str]]
     goal: NotRequired[str]
     user_id: NotRequired[Optional[str]]
+    repo: NotRequired[str]
 
 
 class PilotMiddleware(AgentMiddleware):
@@ -70,7 +66,9 @@ class PilotMiddleware(AgentMiddleware):
 
     def _swap(self, request):
         if isinstance(request.model, MockChatModel):
-            return request.override(model=MissionPilot())
+            board = (request.state or {}).get("world") or {}
+            maintainer = (board.get("repo") or {}).get("maintainer")
+            return request.override(model=StewardPilot(maintainer=maintainer))
         return request
 
     def wrap_model_call(self, request, handler):
@@ -80,14 +78,14 @@ class PilotMiddleware(AgentMiddleware):
         return await handler(self._swap(request))
 
 
-def build_mission_agent(checkpointer: Any | None = None, store: Any | None = None,
+def build_steward_agent(checkpointer: Any | None = None, store: Any | None = None,
                         extra_tools: Optional[list] = None):
     """``extra_tools`` (e.g. from MCP servers) are gated like any acting tool."""
     model = get_llm()
     extra_tools = list(extra_tools or [])
     hitl = HumanInTheLoopMiddleware(
         interrupt_on=policy.build_interrupt_on([t.name for t in extra_tools]),
-        description_prefix="Mission Control wants to act and needs your approval",
+        description_prefix="Repo Steward wants to act on the repository and needs your approval",
         interrupt_mode="per_call",
     )
     middleware: list = [ClientModelMiddleware(), PilotMiddleware()]
@@ -101,7 +99,7 @@ def build_mission_agent(checkpointer: Any | None = None, store: Any | None = Non
         tools=ALL_TOOLS + extra_tools,
         system_prompt=SYSTEM_PROMPT,
         middleware=middleware,
-        state_schema=MissionState,
+        state_schema=StewardState,
         checkpointer=checkpointer,
         store=store,
     )
@@ -158,32 +156,40 @@ async def snapshot(graph, config: dict) -> dict:
         "status": status,
         "requires_input": bool(state.next),
         "pending": pending,
-        "world": values.get("world") or seed_world(),
+        "world": values.get("world") or {},
         "report": values.get("report"),
         "autonomy": values.get("autonomy", "careful"),
-        "ask_above": values.get("ask_above", policy.DEFAULT_ASK_ABOVE),
         "goal": values.get("goal"),
         "mission_id": values.get("mission_id"),
+        "repo": values.get("repo"),
         "closing": text_of(last_ai.content) if last_ai else "",
         "checkpoint_id": state.config.get("configurable", {}).get("checkpoint_id"),
         "step": state.metadata.get("step") if state.metadata else None,
     }
 
 
-def start_input(goal: str, mission_id: Optional[str], autonomy: str, ask_above: float, memory: str,
-                user_id: Optional[str] = None, today=None) -> dict:
+def start_input(goal: str, mission_id: Optional[str], board: dict, autonomy: str, memory: str,
+                user_id: Optional[str] = None) -> dict:
     messages = []
+    repo = board.get("repo", {})
+    context = (f"Repository: {repo.get('full_name')} — {repo.get('description') or ''}\n"
+               f"Default branch: {repo.get('default_branch')}. Labels available: "
+               f"{', '.join(l['name'] for l in board.get('labels', [])) or 'none'}.\n"
+               f"Board: {len(board.get('issues', []))} open issues, {len(board.get('pulls', []))} open pull requests "
+               f"({'live repository' if board.get('mode') == 'live' else 'sample repository'}; "
+               f"{'write access' if board.get('can_write') else 'read-only: actions will be recorded as proposals'}).")
     if memory:
-        messages.append(SystemMessage(content=f"What you remember about the user:\n{memory}"))
+        context += f"\n\nWhat you remember about this repository:\n{memory}"
+    messages.append(SystemMessage(content=context))
     messages.append(HumanMessage(content=goal))
     return {
         "messages": messages,
-        "world": {"reset": seed_world(today)},
+        "world": {"reset": {**board, "ledger": []}},
         "autonomy": autonomy,
-        "ask_above": ask_above,
         "mission_id": mission_id,
         "goal": goal,
         "user_id": user_id,
+        "repo": repo.get("full_name"),
     }
 
 
@@ -233,7 +239,7 @@ async def stream_mission(graph, thread_id: str, command_input, config: Optional[
         cancelled = True
         yield {"type": "cancelled", "message": "Mission paused — everything so far is saved."}
     except Exception as exc:  # surfaced to the UI, key scrubbed
-        logger.exception("Mission stream error")
+        logger.exception("Steward stream error")
         yield {"type": "error", "content": scrub(f"{type(exc).__name__}: {exc}")}
         return
     finally:
@@ -274,7 +280,6 @@ async def decision_points(graph, thread_id: str) -> list[dict]:
             "created_at": state.created_at,
             "approvals": [{"name": a["name"], "args": a["args"]} for a in pending["approvals"]],
             "question": pending["question"]["question"] if pending["question"] else None,
-            "balance": (world.get("wallet") or {}).get("balance"),
             "ledger_len": len(world.get("ledger") or []),
         })
     points.reverse()
