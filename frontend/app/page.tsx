@@ -22,6 +22,9 @@ import {
   ListChecks,
   Layers,
   Square,
+  Plus,
+  Copy,
+  Check,
 } from "lucide-react";
 
 interface Message {
@@ -116,6 +119,10 @@ export default function ChatInterface() {
   const [structuredResponse, setStructuredResponse] = useState<any | null>(null);
   // Active backend features (from /capabilities) shown as header status badges.
   const [capabilities, setCapabilities] = useState<any | null>(null);
+  // True when the /capabilities probe fails — the backend isn't reachable.
+  const [backendDown, setBackendDown] = useState(false);
+  // Timestamp of the assistant message most recently copied (for "Copied" feedback).
+  const [copiedAt, setCopiedAt] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -137,14 +144,43 @@ export default function ChatInterface() {
   }, []);
 
   // Load which optional backend features are active (for the status strip).
-  useEffect(() => {
+  // Also our liveness probe: if it fails, show a "backend unreachable" banner.
+  const loadCapabilities = () => {
     fetch(`${API_URL}/capabilities`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => data && setCapabilities(data))
-      .catch(() => {
-        /* backend not up yet — the strip simply stays hidden */
-      });
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data) => {
+        setCapabilities(data);
+        setBackendDown(false);
+      })
+      .catch(() => setBackendDown(true));
+  };
+  useEffect(() => {
+    loadCapabilities();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Escape backs out of any approval sub-mode and closes the history panel.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setAgentEditing(false);
+      setAgentRejecting(false);
+      setAgentResponding(false);
+      setShowHistory(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const copyMessage = async (message: Message) => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopiedAt(message.timestamp.getTime());
+      setTimeout(() => setCopiedAt(null), 1500);
+    } catch {
+      /* clipboard unavailable (insecure context) — nothing to do */
+    }
+  };
 
   // Map a pending interrupt node / message to its choice options.
   const optionsForInterrupt = (message: string): string[] => {
@@ -304,6 +340,8 @@ export default function ChatInterface() {
         "system",
         "Sorry, there was an error starting the conversation. Please try again."
       );
+      setInput(message); // don't lose what they typed
+      loadCapabilities(); // re-probe: shows the "backend unreachable" banner if that's why
     } finally {
       setIsLoading(false);
     }
@@ -503,6 +541,7 @@ export default function ChatInterface() {
     } catch (error) {
       console.error("Agent error:", error);
       addMessage("system", "Sorry, the agent hit an error. Please try again.");
+      loadCapabilities(); // re-probe: surfaces the backend-unreachable banner
     } finally {
       setIsLoading(false);
     }
@@ -546,8 +585,9 @@ export default function ChatInterface() {
   };
 
   // Switch engines: reset the conversation so each engine starts clean.
-  const switchEngine = (next: "workflow" | "agent" | "deep") => {
-    if (next === engine) return;
+  // `force` restarts even on the same engine (the "New chat" button).
+  const switchEngine = (next: "workflow" | "agent" | "deep", force = false) => {
+    if (next === engine && !force) return;
     setEngine(next);
     setThreadId(null);
     setMessages([]);
@@ -719,7 +759,11 @@ export default function ChatInterface() {
       : "view";
 
     return (
-      <div className="interrupt-card animate-slide-up border-purple-200 from-purple-50 to-indigo-50">
+      <div
+        role="region"
+        aria-label="Tool approval required"
+        className="interrupt-card animate-slide-up border-purple-200 from-purple-50 to-indigo-50"
+      >
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center">
@@ -877,6 +921,7 @@ export default function ChatInterface() {
             <>
               {allowed.includes("approve") && (
                 <button
+                  autoFocus
                   onClick={() => {
                     addMessage("choice", `Approved ${req.name}`, "agent");
                     agentDecide([{ type: "approve" }]);
@@ -959,6 +1004,7 @@ export default function ChatInterface() {
             return (
               <button
                 key={index}
+                autoFocus={index === 0}
                 onClick={() => handleOptionClick(option)}
                 className="option-button w-full group text-left"
                 disabled={isLoading}
@@ -1000,13 +1046,14 @@ export default function ChatInterface() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-mesh">
+    // 100dvh (not 100vh) so the composer stays above mobile browser chrome.
+    <div className="flex flex-col h-[100dvh] bg-mesh">
       {/* Header */}
-      <div className="bg-white/90 backdrop-blur-lg shadow-soft border-b border-white/20 px-4 py-3">
-        <div className="flex items-center space-x-3">
+      <header className="bg-white/90 backdrop-blur-lg shadow-soft border-b border-white/20 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="relative">
             <div className="w-9 h-9 bg-gradient-to-br from-primary-500 to-secondary-600 rounded-xl flex items-center justify-center shadow-soft-lg">
-              <Brain className="w-5 h-5 text-white" />
+              <Brain className="w-5 h-5 text-white" aria-hidden="true" />
             </div>
             <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full border border-white animate-pulse-soft"></div>
           </div>
@@ -1014,14 +1061,22 @@ export default function ChatInterface() {
             <h1 className="text-lg font-bold text-gradient">
               AI Research Assistant
             </h1>
-            <p className="text-gray-600 text-xs font-medium">
+            <p className="hidden sm:block text-gray-600 text-xs font-medium">
               Intelligent research with interactive guidance
             </p>
           </div>
-          <div className="ml-auto flex items-center space-x-3">
+          {/* Controls wrap onto their own row on narrow screens instead of
+              pushing the header off-screen. */}
+          <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
             {/* Engine toggle: deterministic workflow vs. agentic loop */}
-            <div className="flex items-center bg-gray-100 rounded-full p-0.5 border border-gray-200">
+            <div
+              role="radiogroup"
+              aria-label="Engine"
+              className="flex items-center bg-gray-100 rounded-full p-0.5 border border-gray-200"
+            >
               <button
+                role="radio"
+                aria-checked={engine === "workflow"}
                 onClick={() => switchEngine("workflow")}
                 className={`text-xs font-medium px-3 py-1 rounded-full transition-colors ${
                   engine === "workflow"
@@ -1033,6 +1088,8 @@ export default function ChatInterface() {
                 Workflow
               </button>
               <button
+                role="radio"
+                aria-checked={engine === "agent"}
                 onClick={() => switchEngine("agent")}
                 className={`text-xs font-medium px-3 py-1 rounded-full transition-colors ${
                   engine === "agent"
@@ -1044,6 +1101,8 @@ export default function ChatInterface() {
                 Agent
               </button>
               <button
+                role="radio"
+                aria-checked={engine === "deep"}
                 onClick={() => switchEngine("deep")}
                 className={`text-xs font-medium px-3 py-1 rounded-full transition-colors ${
                   engine === "deep"
@@ -1066,10 +1125,22 @@ export default function ChatInterface() {
             {threadId && engine === "workflow" && (
               <button
                 onClick={loadHistory}
+                aria-label="Rewind to an earlier step"
                 title="Rewind to an earlier step (time travel)"
                 className="flex items-center gap-1 text-xs font-medium text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-full px-3 py-1.5 transition-colors"
               >
-                <History className="w-3.5 h-3.5" /> History
+                <History className="w-3.5 h-3.5" aria-hidden="true" /> History
+              </button>
+            )}
+            {threadId && (
+              <button
+                type="button"
+                onClick={() => switchEngine(engine, true)}
+                aria-label="Start a new conversation"
+                title="Start a new conversation"
+                className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-full px-3 py-1.5 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" aria-hidden="true" /> New chat
               </button>
             )}
             <Link
@@ -1080,14 +1151,36 @@ export default function ChatInterface() {
             </Link>
           </div>
         </div>
-      </div>
+      </header>
+
+      {/* Backend unreachable: say so plainly, with a way back. */}
+      {backendDown && (
+        <div
+          role="alert"
+          className="bg-rose-50 border-b border-rose-200 px-4 py-2 text-xs text-rose-800 flex flex-wrap items-center gap-2"
+        >
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+          <span>
+            Can't reach the backend at <code className="font-mono">{API_URL}</code>.
+            Start it with <code className="font-mono">cd backend && python main.py</code>.
+          </span>
+          <button
+            type="button"
+            onClick={loadCapabilities}
+            className="ml-auto rounded-full border border-rose-300 bg-white px-3 py-1 font-medium text-rose-700 hover:bg-rose-100"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Status strip: which optional backend features are active */}
       {capabilities && (
         <div className="bg-white/60 backdrop-blur-sm border-b border-white/30 px-4 py-1.5">
-          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          {/* One scrollable row on mobile; wraps on wider screens. */}
+          <div className="flex flex-nowrap sm:flex-wrap items-center gap-2 text-[11px] overflow-x-auto scrollbar-none">
             <span
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
+              className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
                 capabilities.model?.mock
                   ? "bg-gray-50 border-gray-200 text-gray-500"
                   : "bg-purple-50 border-purple-200 text-purple-700"
@@ -1104,7 +1197,7 @@ export default function ChatInterface() {
 
             {capabilities.guardrails?.enabled && (
               <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-emerald-50 border-emerald-200 text-emerald-700"
+                className="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-emerald-50 border-emerald-200 text-emerald-700"
                 title={
                   "Guardrail middleware active" +
                   (capabilities.guardrails.redact_pii ? " · redacts PII" : "") +
@@ -1120,7 +1213,7 @@ export default function ChatInterface() {
 
             {capabilities.semantic_memory && (
               <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-blue-50 border-blue-200 text-blue-700"
+                className="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-blue-50 border-blue-200 text-blue-700"
                 title="Long-term memory uses embeddings for semantic recall"
               >
                 <Brain className="w-3 h-3" />
@@ -1130,7 +1223,7 @@ export default function ChatInterface() {
 
             {capabilities.structured_output && (
               <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-indigo-50 border-indigo-200 text-indigo-700"
+                className="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-indigo-50 border-indigo-200 text-indigo-700"
                 title="The agent returns a validated ResearchSummary object"
               >
                 <ListChecks className="w-3 h-3" />
@@ -1140,7 +1233,7 @@ export default function ChatInterface() {
 
             {capabilities.mcp?.enabled ? (
               <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-teal-50 border-teal-200 text-teal-700"
+                className="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-teal-50 border-teal-200 text-teal-700"
                 title={`MCP tools: ${capabilities.mcp.tools.join(", ")}`}
               >
                 <Settings className="w-3 h-3" />
@@ -1155,7 +1248,7 @@ export default function ChatInterface() {
               </span>
             ) : (
               <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-gray-50 border-gray-200 text-gray-400"
+                className="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-gray-50 border-gray-200 text-gray-400"
                 title="Set MCP_SERVERS to load tools from Model Context Protocol servers"
               >
                 <Settings className="w-3 h-3" />
@@ -1166,7 +1259,7 @@ export default function ChatInterface() {
             {Array.isArray(capabilities.middleware) &&
               capabilities.middleware.length > 0 && (
                 <span
-                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-violet-50 border-violet-200 text-violet-700"
+                  className="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-violet-50 border-violet-200 text-violet-700"
                   title={`Agent middleware: ${capabilities.middleware.join(" · ")}`}
                 >
                   <Layers className="w-3 h-3" />
@@ -1176,7 +1269,7 @@ export default function ChatInterface() {
 
             {capabilities.resilience && (
               <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-amber-50 border-amber-200 text-amber-700"
+                className="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-amber-50 border-amber-200 text-amber-700"
                 title={
                   `Resilient workflow — retries ×${capabilities.resilience.retry_max_attempts}` +
                   (capabilities.resilience.node_timeout_seconds
@@ -1194,7 +1287,7 @@ export default function ChatInterface() {
 
             {capabilities.deep_agent?.installed && (
               <span
-                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
+                className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
                   capabilities.deep_agent.available
                     ? "bg-teal-50 border-teal-200 text-teal-700"
                     : "bg-gray-50 border-gray-200 text-gray-400"
@@ -1212,7 +1305,7 @@ export default function ChatInterface() {
 
             {capabilities.agui?.enabled && (
               <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-fuchsia-50 border-fuchsia-200 text-fuchsia-700"
+                className="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium bg-fuchsia-50 border-fuchsia-200 text-fuchsia-700"
                 title={`AG-UI protocol endpoint at ${capabilities.agui.path} — connect any AG-UI client (e.g. CopilotKit)`}
               >
                 <Layers className="w-3 h-3" />
@@ -1223,8 +1316,13 @@ export default function ChatInterface() {
         </div>
       )}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      {/* Messages — a live region so screen readers hear new turns. */}
+      <div
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
+      >
         {messages.length === 0 && (
           <div className="text-center py-12 animate-fade-in">
             <div className="relative mb-6">
@@ -1470,12 +1568,28 @@ export default function ChatInterface() {
                           : "text-gray-500"
                       }`}
                     >
-                      <span>{message.timestamp.toLocaleTimeString()}</span>
-                      {message.role === "assistant" && (
-                        <span className="flex items-center space-x-1">
-                          <CheckCircle className="w-3 h-3" />
-                          <span>Verified</span>
-                        </span>
+                      <span>
+                        {message.timestamp.toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      {message.role === "assistant" && message.content && (
+                        <button
+                          type="button"
+                          onClick={() => copyMessage(message)}
+                          aria-label="Copy message"
+                          title="Copy message"
+                          className="inline-flex items-center gap-1 text-gray-400 hover:text-gray-700"
+                        >
+                          {copiedAt === message.timestamp.getTime() ? (
+                            <>
+                              <Check className="w-3 h-3" aria-hidden="true" /> Copied
+                            </>
+                          ) : (
+                            <Copy className="w-3 h-3" aria-hidden="true" />
+                          )}
+                        </button>
                       )}
                     </div>
                   </div>
@@ -1487,7 +1601,11 @@ export default function ChatInterface() {
 
         {/* Interrupt Options */}
         {interruptData && !interruptData.agent && (
-          <div className="interrupt-card animate-slide-up">
+          <div
+            role="region"
+            aria-label="Decision required"
+            className="interrupt-card animate-slide-up"
+          >
             <div className="flex items-center space-x-2 mb-3">
               <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
                 <AlertCircle className="w-4 h-4 text-white" />
@@ -1694,7 +1812,7 @@ export default function ChatInterface() {
 
         {/* Loading indicator */}
         {isLoading && (
-          <div className="flex justify-start animate-fade-in">
+          <div role="status" className="flex justify-start animate-fade-in">
             <div className="flex items-center space-x-3">
               <div className="avatar-sm bg-gradient-to-br from-gray-700 to-gray-800">
                 <Bot className="w-4 h-4 text-white" />
@@ -1753,6 +1871,7 @@ export default function ChatInterface() {
                   : "Continue the conversation..."
               }
               className="input-field w-full pr-10"
+              aria-label="Message"
               disabled={isLoading || !!interruptData?.agent}
             />
             {input && (
@@ -1764,19 +1883,21 @@ export default function ChatInterface() {
           <button
             type="submit"
             disabled={isLoading || !input.trim()}
+            aria-label="Send message"
             className="send-button flex items-center space-x-2"
           >
-            <Send className="w-4 h-4" />
+            <Send className="w-4 h-4" aria-hidden="true" />
             <span className="hidden sm:inline font-medium">Send</span>
           </button>
           {isLoading && threadId && capabilities?.graceful_cancel && (
             <button
               type="button"
               onClick={cancelRun}
+              aria-label="Stop run"
               title="Stop this run — it finishes the current step and saves progress, so you can pick it up later"
               className="flex items-center space-x-2 rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50"
             >
-              <Square className="w-3.5 h-3.5" />
+              <Square className="w-3.5 h-3.5" aria-hidden="true" />
               <span className="hidden sm:inline">Stop</span>
             </button>
           )}

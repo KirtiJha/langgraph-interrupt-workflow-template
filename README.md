@@ -69,7 +69,7 @@ All three share the same provider-agnostic LLM, `web_search` tool, and long-term
 - **🤖 Latest agent stack** — LangGraph **v1.2** + LangChain **v1**, `create_agent`, and `HumanInTheLoopMiddleware`.
 - **📡 Streaming** — Server-Sent Events stream progress *and* the final answer to the UI.
 - **🔭 LangGraph Studio ready** — `langgraph.json` registers all graphs for `langgraph dev`.
-- **🎨 Modern UI** — Next.js 15 + React 19 chat interface with live progress and a rewind panel.
+- **🎨 Modern, accessible UI** — Next.js 15 + React 19 chat interface with live progress and a rewind panel; **mobile-first** (`100dvh` shell, wrap-safe header), **keyboard & screen-reader friendly** (ARIA roles, auto-focused decisions, Escape, focus rings, live regions), and **reduced-motion aware**.
 - **📊 Evaluation harness** — score the agent on answer **correctness** *and* whether it **paused for approval** (`backend/evals`), offline or as a tracked LangSmith experiment.
 - **🔌 AG-UI protocol** — the agent is exposed at `/agui` over the open [AG-UI](https://docs.ag-ui.com) protocol, so it plugs into any AG-UI client (e.g. **CopilotKit**) — human approval included — without touching the bundled UI.
 - **🃏 Generative approval card** — the tool-approval interrupt renders as a structured card: per-field argument editing and **approve / edit / reject / answer** actions.

@@ -31,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ContextEditingMiddleware` (`AGENT_CONTEXT_EDIT_TOKENS`) clears stale tool
   outputs on long threads.
 
+### Changed
+- **UI/UX + accessibility pass** (frontend): the app shell now uses `100dvh`
+  and a wrap-safe two-row header, so on phones the engine toggle, **History**
+  and **New chat** stay reachable and the composer stays anchored; the feature
+  status strip becomes a single scrollable row on mobile. Keyboard & screen
+  readers: the engine toggle is an ARIA radiogroup, interrupt cards are labelled
+  regions that **auto-focus their first action**, the message list is a live
+  region, icon-only buttons have labels, **Escape** backs out of approval
+  sub-modes / the history panel, and global `:focus-visible` rings +
+  `prefers-reduced-motion` support were added. A **backend-unreachable banner**
+  (with Retry, and the typed message restored) replaces a silent failure; a
+  **Copy** button on assistant messages; HH:MM timestamps; and the misleading
+  "Verified" label on every answer was removed.
+
 ### Fixed
 - **deepagents 0.7 regression**: the default deep agent no longer includes the
   to-do list, so our prompt's `write_todos` step pointed at a missing tool —
