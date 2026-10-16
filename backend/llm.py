@@ -1,16 +1,37 @@
-"""Provider-agnostic LLM factory.
+"""Provider-agnostic LLM factory — any provider, any model.
 
-This template is intentionally LLM-agnostic. Pick any provider supported by
-LangChain's ``init_chat_model`` (OpenAI, Anthropic, Google, Groq, Mistral,
-IBM watsonx, Ollama, ...) by setting a couple of environment variables:
+Three ways to point the template at a model, all via environment variables:
 
-    LLM_MODEL=gpt-4o-mini            # any model id
-    LLM_PROVIDER=openai              # optional, inferred from the model when omitted
-    LLM_TEMPERATURE=0.7              # optional
+1. **A native provider** (via LangChain's ``init_chat_model``)::
 
-If no provider credentials are configured, the template falls back to a small
-built-in ``MockChatModel`` so it runs end-to-end (including token streaming)
-with zero configuration. That makes the repo clone-and-run for newcomers.
+       LLM_MODEL=claude-sonnet-4-5          # any model id
+       LLM_PROVIDER=anthropic               # optional; inferred when omitted
+       # …or both at once:  LLM_MODEL=anthropic:claude-sonnet-4-5
+
+   Works for openai, anthropic, google_genai, groq, mistralai, bedrock, ibm,
+   ollama, … (install the matching ``langchain-<provider>`` package; OpenAI,
+   Anthropic and Google ship by default) with that provider's usual API key.
+
+2. **Any OpenAI-compatible endpoint** — OpenRouter, Groq, Together, Fireworks,
+   DeepSeek, Ollama, LM Studio, vLLM, LiteLLM, Azure-style proxies::
+
+       LLM_BASE_URL=https://openrouter.ai/api/v1
+       LLM_API_KEY=...
+       LLM_MODEL=meta-llama/llama-3.3-70b-instruct
+
+3. **Vercel AI Gateway** — one key, models from every provider::
+
+       AI_GATEWAY_API_KEY=...
+       LLM_MODEL=anthropic/claude-sonnet-4.6     # or openai/gpt-5, google/gemini-2.5-pro …
+
+Optional: ``LLM_TEMPERATURE`` (omit it for reasoning models that only accept
+their default), ``LLM_REQUESTS_PER_SECOND`` (client-side rate limit).
+
+If nothing is configured, the template uses a small built-in ``MockChatModel``
+so it runs end-to-end (including token streaming) with zero configuration. If a
+model *is* configured but fails to initialise (missing package, bad name), the
+mock is still used so the app stays up — but the error is recorded and surfaced
+by ``/capabilities`` and the UI, never silently swallowed.
 """
 
 from __future__ import annotations
@@ -18,6 +39,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any, List, Optional
+from urllib.parse import urlparse
 
 from langchain.chat_models import init_chat_model
 from langchain_core.callbacks import (
@@ -30,9 +52,12 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 
 logger = logging.getLogger(__name__)
 
+# Vercel AI Gateway's OpenAI-compatible endpoint.
+AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1"
+
 # API-key environment variables we recognise for auto-detection. When none of
-# these (and no explicit model) are set, we use the mock model for a zero-config
-# demo experience.
+# these (and no explicit model or endpoint) are set, we use the mock model for a
+# zero-config demo experience.
 _KNOWN_PROVIDER_KEYS = (
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -43,7 +68,12 @@ _KNOWN_PROVIDER_KEYS = (
     "FIREWORKS_API_KEY",
     "TOGETHER_API_KEY",
     "WATSONX_API_KEY",
+    "AI_GATEWAY_API_KEY",
+    "LLM_API_KEY",
 )
+
+# The last model-initialisation error, surfaced via model_status().
+_MODEL_ERROR: Optional[str] = None
 
 
 def _truthy(value: Optional[str]) -> bool:
@@ -210,8 +240,9 @@ def using_mock_llm() -> bool:
     if _truthy(os.getenv("USE_MOCK_LLM")):
         return True
     has_model = bool(os.getenv("LLM_MODEL"))
+    has_endpoint = bool(os.getenv("LLM_BASE_URL"))
     has_key = any(os.getenv(key) for key in _KNOWN_PROVIDER_KEYS)
-    return not has_model and not has_key
+    return not has_model and not has_endpoint and not has_key
 
 
 def requests_per_second() -> Optional[float]:
@@ -251,12 +282,64 @@ def _build_rate_limiter():
         return None
 
 
+def resolve_model_config() -> dict:
+    """Work out model / provider / endpoint / key from the environment.
+
+    Precedence: an explicit ``LLM_BASE_URL`` (+ ``LLM_API_KEY``) wins; otherwise
+    ``AI_GATEWAY_API_KEY`` routes through Vercel AI Gateway; otherwise the
+    provider's own SDK and key are used. An OpenAI-compatible endpoint uses the
+    ``openai`` provider unless ``LLM_PROVIDER`` says otherwise (e.g. an
+    Anthropic-compatible proxy with ``LLM_PROVIDER=anthropic``).
+    """
+    base_url = os.getenv("LLM_BASE_URL", "").strip() or None
+    api_key = os.getenv("LLM_API_KEY", "").strip() or None
+    via = "provider"
+    if base_url:
+        via = "openai-compatible"
+    elif os.getenv("AI_GATEWAY_API_KEY", "").strip():
+        base_url = AI_GATEWAY_BASE_URL
+        api_key = api_key or os.getenv("AI_GATEWAY_API_KEY", "").strip()
+        via = "vercel-ai-gateway"
+
+    default_model = "openai/gpt-4o-mini" if via == "vercel-ai-gateway" else "gpt-4o-mini"
+    model = os.getenv("LLM_MODEL", "").strip() or default_model
+    provider = os.getenv("LLM_PROVIDER", "").strip() or None
+    # A bare model name on a custom endpoint means "OpenAI-compatible". A
+    # "provider:model" string carries its own provider, so leave it alone.
+    if base_url and not provider and ":" not in model:
+        provider = "openai"
+
+    return {"model": model, "provider": provider, "base_url": base_url, "api_key": api_key, "via": via}
+
+
+def model_status() -> dict:
+    """What model the app is really using — for ``/capabilities`` and the UI.
+
+    Never includes the API key; the base URL is reduced to its host.
+    """
+    if using_mock_llm():
+        return {"mock": True, "name": None, "provider": None, "via": None, "endpoint": None, "error": None}
+    get_llm()  # construction only (no network): refreshes _MODEL_ERROR
+    cfg = resolve_model_config()
+    host = urlparse(cfg["base_url"]).netloc if cfg["base_url"] else None
+    return {
+        "mock": _MODEL_ERROR is not None,  # a failed init falls back to the mock
+        "name": cfg["model"],
+        "provider": cfg["provider"] or (cfg["model"].split(":", 1)[0] if ":" in cfg["model"] else "auto"),
+        "via": cfg["via"],
+        "endpoint": host,
+        "error": _MODEL_ERROR,
+    }
+
+
 def get_llm(**overrides: Any) -> BaseChatModel:
     """Return a chat model based on environment configuration.
 
     Falls back to :class:`MockChatModel` when nothing is configured or when
-    initialisation fails, so the template always runs.
+    initialisation fails, so the template always runs — a failure is recorded
+    in :func:`model_status` and logged loudly rather than hidden.
     """
+    global _MODEL_ERROR
     if using_mock_llm():
         logger.info(
             "Using built-in MockChatModel (no LLM_MODEL/provider key configured). "
@@ -264,9 +347,16 @@ def get_llm(**overrides: Any) -> BaseChatModel:
         )
         return MockChatModel()
 
-    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
-    provider = os.getenv("LLM_PROVIDER") or None
-    params: dict[str, Any] = {"temperature": float(os.getenv("LLM_TEMPERATURE", "0.7"))}
+    cfg = resolve_model_config()
+    params: dict[str, Any] = {}
+    # Only send temperature when asked: some reasoning models reject anything
+    # but their default.
+    if os.getenv("LLM_TEMPERATURE", "").strip():
+        params["temperature"] = float(os.getenv("LLM_TEMPERATURE"))
+    if cfg["base_url"]:
+        params["base_url"] = cfg["base_url"]
+    if cfg["api_key"]:
+        params["api_key"] = cfg["api_key"]
 
     # Throttle client-side so bursts don't trip provider rate limits.
     rate_limiter = _build_rate_limiter()
@@ -277,11 +367,15 @@ def get_llm(**overrides: Any) -> BaseChatModel:
     params.update(overrides)
 
     try:
-        return init_chat_model(model, model_provider=provider, **params)
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        logger.warning(
-            "Failed to initialise model '%s' (%s); falling back to MockChatModel.",
-            model,
-            exc,
+        model = init_chat_model(cfg["model"], model_provider=cfg["provider"], **params)
+        _MODEL_ERROR = None
+        return model
+    except Exception as exc:
+        _MODEL_ERROR = f"{type(exc).__name__}: {exc}"[:300]
+        logger.error(
+            "Failed to initialise model '%s' (provider=%s): %s — FALLING BACK TO THE "
+            "MOCK MODEL. Check LLM_MODEL / LLM_PROVIDER and that the provider's "
+            "langchain package is installed.",
+            cfg["model"], cfg["provider"], exc,
         )
         return MockChatModel()

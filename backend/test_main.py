@@ -43,6 +43,149 @@ def test_text_of_normalizes_block_content():
     assert text_of(["a", "b"]) == "ab"
 
 
+# --- Any provider / any model -----------------------------------------------
+_LLM_ENV = (
+    "LLM_MODEL", "LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY",
+    "AI_GATEWAY_API_KEY", "LLM_TEMPERATURE",
+)
+
+
+def _clear_llm_env(monkeypatch):
+    for key in _LLM_ENV:
+        monkeypatch.delenv(key, raising=False)
+
+
+@pytest.mark.parametrize(
+    "env, expected",
+    [
+        # Native provider, inferred from the model name.
+        ({"LLM_MODEL": "gpt-4o-mini"}, {"model": "gpt-4o-mini", "provider": None, "base_url": None, "via": "provider"}),
+        # Explicit provider.
+        ({"LLM_MODEL": "claude-sonnet-4-5", "LLM_PROVIDER": "anthropic"},
+         {"model": "claude-sonnet-4-5", "provider": "anthropic", "via": "provider"}),
+        # "provider:model" carries its own provider.
+        ({"LLM_MODEL": "google_genai:gemini-2.5-flash"},
+         {"model": "google_genai:gemini-2.5-flash", "provider": None, "via": "provider"}),
+        # Any OpenAI-compatible endpoint → openai provider + that base URL.
+        ({"LLM_MODEL": "meta-llama/llama-3.3-70b-instruct", "LLM_BASE_URL": "https://openrouter.ai/api/v1", "LLM_API_KEY": "k"},
+         {"provider": "openai", "base_url": "https://openrouter.ai/api/v1", "api_key": "k", "via": "openai-compatible"}),
+        # Vercel AI Gateway shorthand: one key, any provider's model.
+        ({"AI_GATEWAY_API_KEY": "gw", "LLM_MODEL": "anthropic/claude-sonnet-4.6"},
+         {"provider": "openai", "base_url": "https://ai-gateway.vercel.sh/v1", "api_key": "gw", "via": "vercel-ai-gateway"}),
+        # Gateway with no model → a sensible gateway-style default.
+        ({"AI_GATEWAY_API_KEY": "gw"}, {"model": "openai/gpt-4o-mini", "via": "vercel-ai-gateway"}),
+        # An explicit endpoint wins over the gateway; LLM_PROVIDER can pick a non-OpenAI wire format.
+        ({"AI_GATEWAY_API_KEY": "gw", "LLM_BASE_URL": "https://proxy.example/v1", "LLM_PROVIDER": "anthropic", "LLM_MODEL": "claude-x"},
+         {"provider": "anthropic", "base_url": "https://proxy.example/v1", "via": "openai-compatible"}),
+    ],
+)
+def test_resolve_model_config(monkeypatch, env, expected):
+    import llm
+
+    _clear_llm_env(monkeypatch)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    cfg = llm.resolve_model_config()
+    for key, value in expected.items():
+        assert cfg[key] == value, (key, cfg)
+
+
+def test_any_provider_constructs_real_models(monkeypatch):
+    """Each config path builds the right LangChain chat model (no network)."""
+    import llm
+
+    monkeypatch.delenv("USE_MOCK_LLM", raising=False)
+    cases = [
+        ({"LLM_MODEL": "gpt-4o-mini", "OPENAI_API_KEY": "sk-x"}, "ChatOpenAI"),
+        ({"LLM_MODEL": "anthropic:claude-sonnet-4-5", "ANTHROPIC_API_KEY": "sk-x"}, "ChatAnthropic"),
+        ({"LLM_MODEL": "gemini-2.5-flash", "LLM_PROVIDER": "google_genai", "GOOGLE_API_KEY": "x"}, "ChatGoogleGenerativeAI"),
+        ({"LLM_MODEL": "llama3.2", "LLM_BASE_URL": "http://localhost:11434/v1", "LLM_API_KEY": "ollama"}, "ChatOpenAI"),
+        ({"AI_GATEWAY_API_KEY": "gw", "LLM_MODEL": "xai/grok-4"}, "ChatOpenAI"),
+    ]
+    for env, cls in cases:
+        _clear_llm_env(monkeypatch)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        model = llm.get_llm()
+        assert type(model).__name__ == cls, (env, type(model).__name__)
+        assert llm.model_status()["error"] is None
+
+
+def test_temperature_only_sent_when_configured(monkeypatch):
+    """Reasoning models reject non-default temperatures, so don't force one."""
+    import llm
+
+    monkeypatch.delenv("USE_MOCK_LLM", raising=False)
+    _clear_llm_env(monkeypatch)
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    assert llm.get_llm().temperature is None
+    monkeypatch.setenv("LLM_TEMPERATURE", "0.2")
+    assert llm.get_llm().temperature == 0.2
+
+
+def test_bad_model_config_is_surfaced_not_silent(monkeypatch):
+    """A configured-but-broken model falls back to the mock *and says so*."""
+    import llm
+
+    monkeypatch.delenv("USE_MOCK_LLM", raising=False)
+    _clear_llm_env(monkeypatch)
+    monkeypatch.setenv("LLM_MODEL", "some-model")
+    monkeypatch.setenv("LLM_PROVIDER", "definitely-not-a-provider")
+    monkeypatch.setenv("LLM_API_KEY", "super-secret-key")
+    assert isinstance(llm.get_llm(), llm.MockChatModel)
+    status = llm.model_status()
+    assert status["mock"] is True and status["error"]
+    assert "super-secret-key" not in repr(status)  # never leak the key
+    _clear_llm_env(monkeypatch)
+    monkeypatch.setenv("USE_MOCK_LLM", "true")
+    llm.get_llm()
+
+
+# --- Durable state across (serverless) instances ----------------------------
+def test_resuming_unknown_thread_is_404_with_hint(client):
+    resp = client.post("/agent/decide", json={"thread_id": "gone", "decisions": {"x": {"type": "approve"}}})
+    assert resp.status_code == 404
+    assert "DATABASE_URL" in resp.json()["detail"]  # tells you how to fix it
+    resp = client.post("/resume", json={"thread_id": "gone", "choice": "proceed"})
+    assert resp.status_code == 404
+
+
+def test_in_memory_state_does_not_survive_a_new_instance():
+    """The failure mode Postgres fixes: a fresh instance can't see the pause."""
+    first = TestClient(app)
+    with first:
+        events = _sse(first, "POST", "/agent/start", json={"message": "research tides"})
+        thread_id = next(e["thread_id"] for e in events if e["type"] == "thread")
+    with TestClient(app) as second:  # new lifespan = new in-memory saver
+        resp = second.post("/agent/decide", json={"thread_id": thread_id, "decisions": {"x": {"type": "approve"}}})
+        assert resp.status_code == 404
+
+
+@pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="set TEST_DATABASE_URL to run")
+def test_postgres_state_survives_across_instances(monkeypatch):
+    """Pause on one instance, resume on another — what Vercel needs."""
+    monkeypatch.setenv("DATABASE_URL", os.environ["TEST_DATABASE_URL"])
+    with TestClient(app) as instance_a:
+        assert instance_a.get("/capabilities").json()["persistence"]["multi_instance_safe"] is True
+        events = _sse(instance_a, "POST", "/agent/start", json={"message": "research tides"})
+        thread_id = next(e["thread_id"] for e in events if e["type"] == "thread")
+        req = next(e for e in events if e["type"] == "state")["tool_requests"][0]
+        wf_thread = instance_a.post("/start", json={"message": "compare batteries"}).json()["thread_id"]
+
+    with TestClient(app) as instance_b:  # fresh lifespan, fresh pool — only Postgres is shared
+        resumed = _sse(
+            instance_b,
+            "POST",
+            "/agent/decide",
+            json={"thread_id": thread_id, "decisions": {req["interrupt_id"]: {"type": "approve"}}},
+        )
+        state = [e for e in resumed if e["type"] == "state"][-1]
+        assert state["requires_input"] is False and state["final_response"]
+        wf = instance_b.post("/resume", json={"thread_id": wf_thread, "choice": "simplified"})
+        assert wf.status_code == 200
+
+
 def test_rate_limiter_off_by_default_and_configurable(monkeypatch):
     """LLM_REQUESTS_PER_SECOND builds a throttling limiter (free-tier friendly)."""
     import llm

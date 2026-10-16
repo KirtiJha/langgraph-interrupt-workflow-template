@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Any provider, any model** (`backend/llm.py`): beyond native providers
+  (OpenAI, Anthropic and Google SDKs now ship by default; `provider:model`
+  strings supported), `LLM_BASE_URL` + `LLM_API_KEY` target **any
+  OpenAI-compatible endpoint** (OpenRouter, Groq, Together, DeepSeek, Ollama,
+  vLLM, LM Studio, LiteLLM…), and `AI_GATEWAY_API_KEY` routes through **Vercel
+  AI Gateway** for every provider's models with one key. `LLM_TEMPERATURE` is
+  only sent when set (reasoning models reject non-default values).
+- **Durable Postgres persistence** (`backend/persistence.py`): with
+  `DATABASE_URL`/`POSTGRES_URL`, paused runs, history and long-term memory live
+  in Postgres (one pgbouncer-safe pool; tables created idempotently; pgvector
+  semantic memory when `EMBEDDINGS_MODEL` is set). The AG-UI endpoint is
+  re-bound to the same durable graph. `/capabilities` reports the persistence
+  mode, and the UI shows it.
+- **Vercel deployment**: `backend/vercel.json` (300s SSE duration),
+  `.python-version`, `.vercelignore`, `frontend/.env.example`, a README
+  walkthrough + Deploy buttons, and a Vercel section in `docs/DEPLOYMENT.md`.
+- **CI runs a real Postgres** and proves a run paused on one app instance is
+  resumed by a fresh one.
+
+### Changed
+- A configured model that fails to load is now **surfaced** — logged as an
+  error, reported by `/capabilities` (`model.error`, never the key) and shown as
+  a red badge — instead of silently falling back to the mock.
+- Resuming an unknown thread returns a **404 that explains the cause** (state
+  is in memory; set `DATABASE_URL`) instead of an opaque 500.
+- `backend/.env.example` ships with every model setting commented, so a fresh
+  copy is genuinely zero-config, and documents all three model options.
+
+### Added
 - **Jev decision-model risk gate** (optional): the approval policy's "is this
   tool call risky?" check is now a pluggable `RiskClassifier`. The default is
   the existing regex; `HITL_RISK_CLASSIFIER=jev` asks TypeSafe AI's Jev (a

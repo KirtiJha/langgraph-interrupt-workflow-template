@@ -4,8 +4,10 @@ langchain>=1.4.6,<2
 langchain-core>=1.6,<2
 
 # Durable, resumable checkpointing
-langgraph-checkpoint-sqlite>=3.1,<4
+langgraph-checkpoint-sqlite>=3.1,<4        # single server: CHECKPOINT_DB=checkpoints.db
 aiosqlite>=0.20
+langgraph-checkpoint-postgres>=3,<4        # multi-instance / serverless (Vercel): DATABASE_URL
+psycopg[binary,pool]>=3.2
 
 # Deep Agent engine (planning + subagents). Optional — the app boots without it,
 # with the Deep Agent engine disabled.
@@ -22,11 +24,17 @@ pydantic>=2.9,<3
 python-multipart>=0.0.12
 python-dotenv>=1.0
 
-# --- LLM providers (install the one you use) ---
-# The template is provider-agnostic via langchain's init_chat_model.
+# --- LLM providers ---
+# Provider-agnostic via langchain's init_chat_model. These three ship by default;
+# langchain-openai also covers ANY OpenAI-compatible endpoint (LLM_BASE_URL):
+# Vercel AI Gateway, OpenRouter, Groq, Together, Fireworks, DeepSeek, Ollama,
+# LM Studio, vLLM, LiteLLM …
 langchain-openai>=1.2,<2
-# langchain-anthropic>=1.0
-# langchain-google-genai>=2.0
+langchain-anthropic>=1.0,<2
+langchain-google-genai>=2.0
+# Native SDKs for other providers (only needed if you don't use an OpenAI-
+# compatible endpoint for them):
+# langchain-groq / langchain-mistralai / langchain-aws (bedrock) / langchain-ollama
 # langchain-ibm>=0.3            # IBM watsonx (set LLM_PROVIDER=ibm)
 
 # --- Optional tools ---

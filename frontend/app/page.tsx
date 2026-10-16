@@ -1207,19 +1207,62 @@ export default function ChatInterface() {
           <div className="flex flex-nowrap sm:flex-wrap items-center gap-2 text-[11px] overflow-x-auto scrollbar-none">
             <span
               className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
-                capabilities.model?.mock
+                capabilities.model?.error
+                  ? "bg-rose-50 border-rose-200 text-rose-700"
+                  : capabilities.model?.mock
                   ? "bg-gray-50 border-gray-200 text-gray-500"
                   : "bg-purple-50 border-purple-200 text-purple-700"
               }`}
               title={
-                capabilities.model?.mock
-                  ? "Offline mock model — set LLM_MODEL + a provider key for a real LLM"
-                  : "Live provider model"
+                capabilities.model?.error
+                  ? `Model "${capabilities.model.name}" failed to load — running on the mock model. ${capabilities.model.error}`
+                  : capabilities.model?.mock
+                  ? "Offline mock model — set LLM_MODEL + a provider key (or AI_GATEWAY_API_KEY) for a real LLM"
+                  : `Live model: ${capabilities.model?.name}` +
+                    (capabilities.model?.provider ? ` · provider ${capabilities.model.provider}` : "") +
+                    (capabilities.model?.endpoint ? ` · ${capabilities.model.endpoint}` : "")
               }
             >
-              <Bot className="w-3 h-3" />
-              {capabilities.model?.mock ? "Mock model" : capabilities.model?.name}
+              {capabilities.model?.error ? (
+                <AlertCircle className="w-3 h-3" aria-hidden="true" />
+              ) : (
+                <Bot className="w-3 h-3" aria-hidden="true" />
+              )}
+              {capabilities.model?.error
+                ? `Model error: ${capabilities.model.name}`
+                : capabilities.model?.mock
+                ? "Mock model"
+                : capabilities.model?.name}
+              {!capabilities.model?.mock && capabilities.model?.via === "vercel-ai-gateway" && (
+                <span className="font-normal opacity-70">· AI Gateway</span>
+              )}
             </span>
+
+            {capabilities.persistence && (
+              <span
+                className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full px-2 py-0.5 border font-medium ${
+                  capabilities.persistence.multi_instance_safe
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                    : capabilities.persistence.durable
+                    ? "bg-sky-50 border-sky-200 text-sky-700"
+                    : "bg-gray-50 border-gray-200 text-gray-500"
+                }`}
+                title={
+                  capabilities.persistence.multi_instance_safe
+                    ? "Paused runs are stored in Postgres — durable and shared across instances"
+                    : capabilities.persistence.durable
+                    ? "Paused runs survive restarts (SQLite) on this single server"
+                    : "Paused runs live in memory — lost on restart and not shared across serverless instances. Set DATABASE_URL for production."
+                }
+              >
+                <History className="w-3 h-3" aria-hidden="true" />
+                {capabilities.persistence.checkpointer === "postgres"
+                  ? "Postgres state"
+                  : capabilities.persistence.checkpointer === "sqlite"
+                  ? "SQLite state"
+                  : "In-memory state"}
+              </span>
+            )}
 
             {capabilities.guardrails?.enabled && (
               <span

@@ -354,3 +354,6 @@ watson-credentials.json
 # Local development
 local_settings.py
 settings_local.py
+
+# Vercel reads the backend Python version from this file — keep it tracked.
+!backend/.python-version
