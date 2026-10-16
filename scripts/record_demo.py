@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Record the Mission Control demo GIF (``docs/demo.gif``).
+"""Record the Repo Steward demo GIF (``docs/demo.gif``).
 
-Drives the running app with Playwright through one mission and stitches the
-key moments together with Pillow:
+Drives the running app with Playwright through one triage on the sample repo
+and stitches the key moments together with Pillow:
 
-  1. Gallery → launch "Plan Mom's 60th birthday dinner" (balanced autonomy)
-  2. The agent reads the world, compares venues, and asks which one
-  3. An approval with a risk score and a wallet preview → reject with a reason
-  4. The runner-up → edit the deposit → approve
-  5. Invites + calendar → approve all → mission report
-  6. Rewind → branch from an earlier decision
+  1. Gallery → load the sample repo → Balanced autonomy → Triage the open issues
+  2. Grouped approvals with risk and previews (labels applied, comments ask)
+  3. Reject a comment with a reason → it's dropped, the rest continue
+  4. Edit a comment before it posts → approve all → mission report
+  5. Rewind → branch from an earlier decision
 
 Prereqs (both servers running):
     cd backend  && python main.py                        # http://localhost:8000
@@ -56,41 +55,42 @@ def main() -> None:
         page = browser.new_context(viewport={"width": WIDTH, "height": 800}, device_scale_factor=1).new_page()
         page.goto(URL, wait_until="networkidle")
         page.wait_for_timeout(600)
-        shot(page, "gallery", 2.5)
+        shot(page, "gallery", 2.4)
+        page.get_by_role("button", name="Try the sample repo").click()
+        page.get_by_text("acme/pixelforge").first.wait_for(timeout=15000)
+        page.wait_for_timeout(500)
+        shot(page, "repo", 2.0)
         page.get_by_role("radio", name="Balanced").click()
-        page.wait_for_timeout(300)
-        shot(page, "autonomy", 1.4)
-        page.get_by_role("button", name="Plan Mom's 60th birthday dinner").click()
+        page.get_by_role("button", name="Triage the open issues").click()
         page.wait_for_timeout(1500)
         shot(page, "reading", 1.6)
         wait_for_turn(page)
-        shot(page, "question", 2.4)
-        page.get_by_role("button", name="Olive & Fig").first.click()
-        wait_for_turn(page)
-        shot(page, "approval", 3.0)
+        shot(page, "approvals", 3.2)
         page.get_by_role("button", name="Reject").first.click()
-        page.get_by_placeholder("Too expensive").fill("Too far for Grandma")
+        page.get_by_placeholder("Too formal").fill("We keep it casual here — no checklist")
         page.wait_for_timeout(400)
-        shot(page, "reject", 1.8)
-        page.get_by_role("button", name="Reject", exact=True).last.click()
+        shot(page, "reject", 2.0)
+        page.locator("section[aria-label='Decisions']").first.locator("form button[type='submit']").first.click()
         wait_for_turn(page)
-        shot(page, "runner-up", 2.4)
+        shot(page, "after-reject", 2.0)
         page.get_by_role("button", name="Edit").first.click()
-        page.get_by_label("amount").fill("140")
+        page.get_by_label("body").fill("Thanks! Could you share the output of `--version` and a sample file?")
         page.wait_for_timeout(300)
-        shot(page, "edit", 2.0)
+        shot(page, "edit", 2.2)
         page.get_by_role("button", name="Run with these changes").click()
         wait_for_turn(page)
-        shot(page, "invites", 2.6)
         page.get_by_role("button", name="Approve all").click()
         page.wait_for_function("() => document.body.textContent.includes('Mission report')", timeout=60000)
         page.wait_for_timeout(900)
         shot(page, "report", 3.2)
+        page.get_by_role("tab", name="Activity").click()
+        page.wait_for_timeout(300)
+        shot(page, "activity", 2.0)
         page.get_by_role("button", name="Rewind").click()
         page.get_by_role("button", name="Branch from here").first.wait_for(timeout=10000)
         page.wait_for_timeout(300)
-        shot(page, "history", 2.2)
-        page.get_by_role("button", name="Branch from here").nth(1).click()
+        shot(page, "history", 2.0)
+        page.get_by_role("button", name="Branch from here").first.click()
         wait_for_turn(page)
         shot(page, "branch", 3.0)
         browser.close()

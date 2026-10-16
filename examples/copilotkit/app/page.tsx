@@ -29,12 +29,12 @@ export default function Page() {
         </span>
       </header>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <CopilotKit runtimeUrl="/api/copilotkit" agent="mission_control">
+        <CopilotKit runtimeUrl="/api/copilotkit" agent="repo_steward">
           <CopilotChat
             labels={{
               title: "HITL Research Agent",
               initial:
-                "Give me a job — cancel the gym, reply to Priya — and I'll pause for your approval before I act.",
+                "Tell me what to do on the repo — triage, stale sweep, release notes — and I'll pause for your approval before anything is posted.",
             }}
             className="h-full"
           />
