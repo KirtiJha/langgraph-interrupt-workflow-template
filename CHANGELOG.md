@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **The template is now Repo Steward: a maintainer agent for real GitHub
+  repositories.** The simulated personal world is gone; the agent reads and
+  acts on GitHub itself.
+  - `backend/steward/github.py`: real REST backend and a fixture backend behind
+    one interface. Visitor tokens arrive as `X-GitHub-Token`, scoped per
+    request, never stored, scrubbed from errors. Public repos work read-only;
+    writes need a token (or `GITHUB_TOKEN` + `STEWARD_SERVER_TOKEN_WRITES`).
+  - The board (issues, PRs, labels, README) lives in graph state; acting tools
+    return operations the reducer applies, so live and sample repos render the
+    same way and time travel rewinds the board.
+  - Tools: list/read issues and PRs, duplicates, files, diffs, release
+    context; act with labels, comments, close/reopen, retitle, create issue,
+    assign, request review, merge. Observe mode records proposals.
+  - Policy: risk from the board (public comments, first-timers, active
+    threads, PR closes, merges) and four autonomy levels: observe, careful,
+    balanced, autopilot.
+  - A rule-based offline pilot triages any repo, sweeps stale threads, reviews
+    PRs from diff stats, drafts release notes and welcomes newcomers.
+  - UI: repo picker, Connect GitHub, grouped approvals with rendered previews,
+    the board with ghosts, proposals as a copyable checklist.
+  - Evals forbid closing originals, closing PRs, merging and nudging regulars.
 - **The template is now Mission Control.** The research assistant (workflow,
   agent, Deep Agent and approval-workflow engines) is replaced by one personal
   agent that acts on a simulated world — inbox, calendar, wallet, contacts,

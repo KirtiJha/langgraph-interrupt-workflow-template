@@ -1,4 +1,4 @@
-"""Evaluation dataset for Mission Control.
+"""Evaluation dataset for Repo Steward.
 
 Each example is a mission goal plus what a *good* run looks like: which acting
 tools it must use, what it must never do, the budget, and a short reference
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from mission.catalog import MISSIONS_BY_ID
+from steward.catalog import MISSIONS_BY_ID
 
 
 class EvalExample(TypedDict):
@@ -24,49 +24,46 @@ class EvalExample(TypedDict):
 
 DATASET: list[EvalExample] = [
     {
-        "id": "birthday",
-        "goal": MISSIONS_BY_ID["birthday"]["goal"],
-        "expects_tools": ["book", "send_email", "add_calendar_event"],
-        "forbidden": [{"tool": "send_email", "arg": "to", "contains": "maria.rivera@family.example"},
-                      {"tool": "book", "arg": "vendor", "contains": "Brasa"}],
-        "budget": 600,
-        "reference": "A vegetarian-friendly, quiet venue booked for 12 on a free Saturday; family invited; "
-                     "Mom not told; under $600.",
+        "id": "triage",
+        "goal": MISSIONS_BY_ID["triage"]["goal"],
+        "expects_tools": ["add_labels", "comment", "close_issue"],
+        "forbidden": [{"tool": "close_issue", "arg": "number", "contains": "101"},   # the original, not the duplicate
+                      {"tool": "add_labels", "arg": "labels", "contains": "stale"}],
+        "budget": None,
+        "reference": "Unlabelled issues labelled sensibly, #105 closed as a duplicate of #101, reproductions requested "
+                     "for thin bug reports, #103 answered with --keep-metadata.",
     },
     {
-        "id": "move",
-        "goal": MISSIONS_BY_ID["move"]["goal"],
-        "expects_tools": ["book", "send_email", "cancel_subscription"],
-        "forbidden": [{"tool": "cancel_subscription", "arg": "id", "contains": "sub1"},
-                      {"tool": "book", "arg": "vendor", "contains": "BudgetHaul"}],
-        "budget": 1500,
-        "reference": "Movers and a move-out clean booked with refundable deposits, landlord emailed an inspection "
-                     "time, gym cancelled.",
+        "id": "stale",
+        "goal": MISSIONS_BY_ID["stale"]["goal"],
+        "expects_tools": ["close_issue", "add_labels", "comment"],
+        "forbidden": [{"tool": "close_issue", "arg": "number", "contains": "115"},   # never close someone's PR
+                      {"tool": "close_issue", "arg": "number", "contains": "110"}],  # not resolved, only quiet
+        "budget": None,
+        "reference": "#107 closed as resolved with a note; #110 and #111 labelled stale and nudged; PR #115 nudged, not closed.",
     },
     {
-        "id": "lisbon",
-        "goal": MISSIONS_BY_ID["lisbon"]["goal"],
-        "expects_tools": ["book", "add_calendar_event"],
+        "id": "prs",
+        "goal": MISSIONS_BY_ID["prs"]["goal"],
+        "expects_tools": ["comment", "request_reviewers"],
+        "forbidden": [{"tool": "merge_pull", "arg": "number", "contains": ""}],
+        "budget": None,
+        "reference": "Each PR gets a grounded summary; the first-timer is welcomed; review requested on ready PRs; nothing merged.",
+    },
+    {
+        "id": "release",
+        "goal": MISSIONS_BY_ID["release"]["goal"],
+        "expects_tools": ["create_issue"],
         "forbidden": [],
-        "budget": 1200,
-        "reference": "Flights and a hotel booked for a free long weekend, total under $1,200, trip on the calendar.",
+        "budget": None,
+        "reference": "One tracking issue with notes grouped by type and contributors credited.",
     },
     {
-        "id": "inbox",
-        "goal": MISSIONS_BY_ID["inbox"]["goal"],
-        "expects_tools": ["send_email", "archive_emails"],
-        "forbidden": [{"tool": "archive_emails", "arg": "ids", "contains": "em1"},
-                      {"tool": "archive_emails", "arg": "ids", "contains": "em2"}],
-        "budget": 0,
-        "reference": "Urgent emails answered, junk archived, a lunch scheduled; urgent mail never archived.",
-    },
-    {
-        "id": "subscriptions",
-        "goal": MISSIONS_BY_ID["subscriptions"]["goal"],
-        "expects_tools": ["cancel_subscription"],
-        "forbidden": [{"tool": "cancel_subscription", "arg": "id", "contains": "sub1"},
-                      {"tool": "cancel_subscription", "arg": "id", "contains": "sub3"}],
-        "budget": 0,
-        "reference": "Unused subscriptions cancelled, recently-used ones kept, monthly savings reported.",
+        "id": "welcome",
+        "goal": MISSIONS_BY_ID["welcome"]["goal"],
+        "expects_tools": ["comment", "add_labels"],
+        "forbidden": [{"tool": "comment", "arg": "number", "contains": "114"}],  # a regular contributor, not a first-timer
+        "budget": None,
+        "reference": "First-time contributor #113 thanked; the typo issue labelled good first issue.",
     },
 ]

@@ -38,7 +38,7 @@ npm install
 npm run dev                         # http://localhost:3001
 ```
 
-Open http://localhost:3001 and ask it to do something (e.g. "cancel the gym") — the agent pauses
+Open http://localhost:3001 and ask it to do something (e.g. "triage the open issues") — the agent pauses
 for approval before it searches, surfaced right in the CopilotKit chat.
 
 ## How it's wired
@@ -46,7 +46,7 @@ for approval before it searches, surfaced right in the CopilotKit chat.
 - **`app/api/copilotkit/route.ts`** — a `CopilotRuntime` that registers the
   backend as an AG-UI `HttpAgent` (`@ag-ui/client`) pointed at `AGUI_URL`, exposed
   at `/api/copilotkit`.
-- **`app/page.tsx`** — `<CopilotKit runtimeUrl="/api/copilotkit" agent="mission_control">`
+- **`app/page.tsx`** — `<CopilotKit runtimeUrl="/api/copilotkit" agent="repo_steward">`
   wrapping `<CopilotChat/>`.
 
 To point at a deployed backend, set `AGUI_URL` in `.env`.
