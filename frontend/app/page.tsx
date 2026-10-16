@@ -531,6 +531,8 @@ export default function ChatInterface() {
                   data.allowed || ["approve", "reject"],
                 interruptId: data.tool_requests[0]?.interrupt_id ?? null,
                 responseSchema: data.tool_requests[0]?.response_schema ?? null,
+                // Risk-classifier verdict (why the policy paused), if any.
+                risk: data.tool_requests[0]?.risk ?? null,
               },
             });
           } else if (data.final_response && !assistantAdded) {
@@ -785,6 +787,30 @@ export default function ChatInterface() {
             )}
           </code>
         </div>
+
+        {/* Why it paused: the risk classifier's verdict + confidence, when known. */}
+        {interruptData?.agent?.risk && (
+          <p
+            className={`mb-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+              interruptData.agent.risk.risky
+                ? "bg-rose-50 border-rose-200 text-rose-700"
+                : "bg-emerald-50 border-emerald-200 text-emerald-700"
+            }`}
+            title={interruptData.agent.risk.reason}
+          >
+            <ShieldAlert className="w-3 h-3" aria-hidden="true" />
+            {interruptData.agent.risk.source === "jev" ? "Jev" : "Policy"}:{" "}
+            {interruptData.agent.risk.risky ? "risky" : "looks safe"}
+            {typeof interruptData.agent.risk.confidence === "number" && (
+              <span className="font-normal opacity-80">
+                · {Math.round(interruptData.agent.risk.confidence * 100)}% confident
+              </span>
+            )}
+            {interruptData.agent.risk.reason && (
+              <span className="font-normal opacity-80">· {interruptData.agent.risk.reason}</span>
+            )}
+          </p>
+        )}
 
         {/* Structured argument view / editor (generated from the tool call) */}
         <div className="rounded-lg border border-purple-100 bg-white/70 divide-y divide-purple-50 mb-3 overflow-hidden">

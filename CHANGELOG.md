@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Jev decision-model risk gate** (optional): the approval policy's "is this
+  tool call risky?" check is now a pluggable `RiskClassifier`. The default is
+  the existing regex; `HITL_RISK_CLASSIFIER=jev` asks TypeSafe AI's Jev (a
+  "System One" model returning a typed verdict with calibrated confidence) and
+  pauses when the call is risky **or** confidence is below
+  `HITL_RISK_CONFIDENCE` — escalating uncertainty to a human. The verdict and
+  confidence are shown on the approval card. Needs `langgraph-jev` +
+  `TYPESAFE_API_KEY`; degrades to the regex otherwise or on API errors.
 - **Per-call human-in-the-loop** (`HITL_INTERRUPT_MODE=per_call`, now the
   default): with langchain ≥ 1.4.6 each gated tool call raises its own
   interrupt, answered by interrupt id, and carries a JSON `response_schema` of

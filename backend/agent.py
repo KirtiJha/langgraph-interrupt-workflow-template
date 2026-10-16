@@ -26,6 +26,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware
 from pydantic import BaseModel, Field
 
+import approval_policy
 import run_control
 from approval_policy import build_interrupt_on
 from guardrails import GuardrailMiddleware
@@ -197,6 +198,8 @@ def _pending_interrupt(interrupts: Any) -> dict:
                     "description": value.get("description", ""),
                     "allowed": _decisions_from_schema(schema) or ["approve", "reject"],
                     "response_schema": schema,
+                    # Why the policy paused (risk classifier verdict), if known.
+                    "risk": approval_policy.verdict_for(value.get("tool_call_id")),
                 }
             )
         elif "action_requests" in value:  # batched

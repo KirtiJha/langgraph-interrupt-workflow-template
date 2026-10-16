@@ -341,6 +341,17 @@ InterruptOnConfig(allowed_decisions=[...], when=lambda req: looks_sensitive(req.
 That's the "approve the risky 5%, not every call" pattern that keeps agents
 usable in practice — defined once, applied to built-in, deep-agent and MCP tools.
 
+**Decision-model risk gate (Jev, optional).** The "does this look risky?" call
+is pluggable. The default is a regex. Set `HITL_RISK_CLASSIFIER=jev` and it
+asks [TypeSafe AI's **Jev**](https://typesafe.ai) — a *System One* model that
+returns a **typed verdict with calibrated confidence** in ~100 ms instead of
+text. The gate then pauses when Jev says *risky* **or when it isn't confident**
+(`HITL_RISK_CONFIDENCE`, default 0.75): escalating uncertainty to a human is
+exactly what a decision model is for, and the approval card shows the verdict
+("Jev: risky · 91% confident"). Needs `pip install langgraph-jev` +
+`TYPESAFE_API_KEY`; without them — or if the API errors — it falls back to the
+regex, so the template never depends on it.
+
 The active feature set is reported by `GET /capabilities` and shown as a status
 strip in the chat header.
 
