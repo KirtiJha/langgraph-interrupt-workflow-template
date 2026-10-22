@@ -12,7 +12,9 @@ the code — that needs a real model, and the UI says so.
 from __future__ import annotations
 
 import json
+import os
 import re
+import time
 from datetime import date
 from typing import Any, Callable, Iterator, List, Optional
 
@@ -393,6 +395,14 @@ def _describe(call: dict) -> str:
 
 
 # --- The model ---------------------------------------------------------------
+def demo_pace() -> float:
+    """Seconds per streamed word when recording demos (``STEWARD_DEMO_PACE_MS``); 0 = off."""
+    try:
+        return max(0.0, float(os.getenv("STEWARD_DEMO_PACE_MS", "0")) / 1000)
+    except ValueError:
+        return 0.0
+
+
 class StewardPilot(BaseChatModel):
     """Rule-based chat model for Repo Steward (offline / mock)."""
 
@@ -426,7 +436,12 @@ class StewardPilot(BaseChatModel):
     def _stream(self, messages, stop=None, run_manager: Optional[CallbackManagerForLLMRun] = None, **kw) -> Iterator[ChatGenerationChunk]:
         msg = self._next(messages)
         words = str(msg.content).split(" ")
+        pace = demo_pace()
+        if pace:
+            time.sleep(pace * 8)  # "thinking" before it speaks
         for i, token in enumerate(words):
+            if pace:
+                time.sleep(pace)
             text = token + (" " if i < len(words) - 1 else "")
             chunk = ChatGenerationChunk(message=AIMessageChunk(content=text))
             if run_manager:

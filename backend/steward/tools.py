@@ -22,6 +22,12 @@ from steward.github import GitHubError, backend_for, days_ago, scrub, write_toke
 
 
 def _emit(message: str, **extra) -> None:
+    from steward.pilot import demo_pace
+
+    if demo_pace():  # let reading tools visibly "work" when recording demos
+        import time
+
+        time.sleep(demo_pace() * 6)
     try:
         from langgraph.config import get_stream_writer
 
